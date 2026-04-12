@@ -14,6 +14,6 @@
 //    "Cualquier persona con el enlace puede VER"
 // ───────────────────────────────────────────────────────────────
 
-var SHEETS_URL = 'https://docs.google.com/spreadsheets/d/1UCx70VStppxMHkG-01FMEtuZ_Y3FM7iorTl0D8PIuS4/edit?usp=sharing';
+var SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxsvbxSZfiQ4OoUTQ2MMigTHQmGxeJOTeJMKPONJfD4tSRhxouc1XuJxrdLsrXRj4As_Q/exec';
 
-var SHEETS_ID  = '1UCx70VStppxMHkG-01FMEtuZ_Y3FM7iorTl0D8PIuS4';   // ← pega aquí el ID de tu Google Sheet
+var SHEETS_ID  = 'AKfycbxsvbxSZfiQ4OoUTQ2MMigTHQmGxeJOTeJMKPONJfD4tSRhxouc1XuJxrdLsrXRj4As_Q';   // ← pega aquí el ID de tu Google Sheet
