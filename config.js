@@ -16,4 +16,4 @@
 
 var SHEETS_URL = 'https://script.google.com/macros/s/AKfycbzTGxJt2l6i1rrGQF88B_0YJOn0QAJ_MEouIEk5d1YEN9fpLnZvqI6ZzwLNVs0JTB49wg/exec';
 
-var SHEETS_ID  = '';   // ← pega aquí el ID de tu Google Sheet
+var SHEETS_ID  = '1UCx70VStppxMHkG-01FMEtuZ_Y3FM7iorTl0D8PIuS4';   // ← pega aquí el ID de tu Google Sheet
