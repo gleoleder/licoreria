@@ -19,11 +19,13 @@ const SHEETS = {
   async send(action, data) {
     const url = this.url();
     if (!url) return;
-    const form = new FormData();
-    form.append('action', action);
-    form.append('data', JSON.stringify(data));
     try {
-      await fetch(url, { method: 'POST', mode: 'no-cors', body: form });
+      // URLSearchParams → application/x-www-form-urlencoded
+      // Es el único encoding que Apps Script lee de forma confiable en e.parameter
+      const params = new URLSearchParams();
+      params.append('action', action);
+      params.append('data', JSON.stringify(data));
+      await fetch(url, { method: 'POST', mode: 'no-cors', body: params });
     } catch (e) {
       console.warn('Sheets sync error:', e);
     }
