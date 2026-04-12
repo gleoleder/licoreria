@@ -461,6 +461,27 @@ html, body {
 .form-input:focus { border-color: var(--amber); }
 select.form-input option { background: var(--surface2); }
 
+/* Autocomplete en modales */
+.ac-wrap { position: relative; }
+.ac-list {
+  display: none; position: absolute; left: 0; right: 0; top: calc(100% + 3px);
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: 8px; z-index: 200;
+  max-height: 220px; overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+.ac-list.open { display: block; }
+.ac-item {
+  padding: 9px 13px; cursor: pointer;
+  font: 400 .87rem var(--f); color: var(--text);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+  transition: background .1s;
+}
+.ac-item:last-child { border-bottom: none; }
+.ac-item:hover, .ac-item.active { background: var(--surface3); }
+.ac-item-sub { font-size: .75rem; color: var(--text3); margin-left: auto; }
+
 /* Barcodes */
 .barcodes-section { border-top: 1px solid var(--border); padding-top: 16px; }
 .barcodes-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }

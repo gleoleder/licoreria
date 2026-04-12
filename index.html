@@ -297,15 +297,19 @@
       <div class="modal-body">
         <div class="form-group" id="stockProductoGroup">
           <label>Producto *</label>
-          <select id="stockProductoId" class="form-input"></select>
+          <div class="ac-wrap" id="stockProdWrap">
+            <input type="text" id="stockProdInput" class="form-input" placeholder="Buscar producto..." autocomplete="off">
+            <div class="ac-list" id="stockProdList"></div>
+          </div>
+          <input type="hidden" id="stockProductoId">
         </div>
         <div class="form-group">
           <label>Tipo de movimiento</label>
-          <select id="stockTipo" class="form-input">
-            <option value="entrada">📦 Entrada — nueva compra (crea lote FIFO)</option>
-            <option value="ajuste_pos">➕ Ajuste positivo</option>
-            <option value="ajuste_neg">➖ Ajuste negativo / merma</option>
-          </select>
+          <div class="ac-wrap" id="stockTipoWrap">
+            <input type="text" id="stockTipoInput" class="form-input" placeholder="Seleccionar tipo..." autocomplete="off" readonly>
+            <div class="ac-list" id="stockTipoList"></div>
+          </div>
+          <input type="hidden" id="stockTipo" value="entrada">
         </div>
         <div class="form-group" id="stockCostoGroup">
           <label>Costo de adquisición por unidad (Bs) *</label>

@@ -712,28 +712,98 @@ async function renderInventory(filter = '') {
 }
 
 async function openStockAdj(id = null) {
-  // Poblar selector de productos
   const all = await DB.getActiveProducts();
-  const sel = document.getElementById('stockProductoId');
-  sel.innerHTML = all.map(p =>
-    `<option value="${p.id}">${p.name} — stock: ${p.stock} ${p.base_unit}(s)</option>`
+
+  // ── Autocompletado de Producto ────────────────────────────
+  const prodInput  = document.getElementById('stockProdInput');
+  const prodList   = document.getElementById('stockProdList');
+  const prodHidden = document.getElementById('stockProductoId');
+
+  prodInput.value  = '';
+  prodHidden.value = '';
+  prodList.classList.remove('open');
+
+  function renderProdList(query) {
+    const q = query.toLowerCase();
+    const matches = q
+      ? all.filter(p => p.name.toLowerCase().includes(q)).slice(0, 10)
+      : all.slice(0, 10);
+    prodList.innerHTML = matches.map(p =>
+      `<div class="ac-item" data-id="${p.id}" data-name="${p.name}">
+         <span>${p.name}</span>
+         <span class="ac-item-sub">${p.stock} ${p.base_unit}(s)</span>
+       </div>`
+    ).join('');
+    prodList.classList.toggle('open', matches.length > 0);
+  }
+
+  prodInput.oninput = () => renderProdList(prodInput.value);
+  prodInput.onfocus = () => renderProdList(prodInput.value);
+
+  prodList.onclick = async e => {
+    const item = e.target.closest('.ac-item');
+    if (!item) return;
+    prodInput.value  = item.dataset.name;
+    prodHidden.value = item.dataset.id;
+    prodList.classList.remove('open');
+    await loadProductData(parseInt(item.dataset.id));
+  };
+
+  // Cerrar lista al hacer click fuera
+  document.addEventListener('pointerdown', function closeProd(e) {
+    if (!e.target.closest('#stockProdWrap')) {
+      prodList.classList.remove('open');
+      document.removeEventListener('pointerdown', closeProd);
+    }
+  });
+
+  // ── Autocompletado de Tipo de movimiento ──────────────────
+  const TIPOS = [
+    { value: 'entrada',    label: '📦 Entrada — nueva compra (crea lote FIFO)' },
+    { value: 'ajuste_pos', label: '➕ Ajuste positivo' },
+    { value: 'ajuste_neg', label: '➖ Ajuste negativo / merma' }
+  ];
+  const tipoInput  = document.getElementById('stockTipoInput');
+  const tipoList   = document.getElementById('stockTipoList');
+  const tipoHidden = document.getElementById('stockTipo');
+
+  // Preseleccionar "Entrada"
+  tipoInput.value  = TIPOS[0].label;
+  tipoHidden.value = TIPOS[0].value;
+  tipoList.classList.remove('open');
+
+  tipoList.innerHTML = TIPOS.map(t =>
+    `<div class="ac-item" data-value="${t.value}">${t.label}</div>`
   ).join('');
 
-  // Si viene un id específico, preseleccionarlo; si no, dejar libre elección
-  if (id) sel.value = id;
+  tipoInput.onfocus = () => tipoList.classList.add('open');
 
-  const productoGroup = document.getElementById('stockProductoGroup');
-  productoGroup.style.display = 'flex';
+  tipoList.onclick = e => {
+    const item = e.target.closest('.ac-item');
+    if (!item) return;
+    tipoInput.value  = TIPOS.find(t => t.value === item.dataset.value)?.label || '';
+    tipoHidden.value = item.dataset.value;
+    tipoList.classList.remove('open');
+    const costoGroup = document.getElementById('stockCostoGroup');
+    costoGroup.style.display = item.dataset.value === 'entrada' ? 'flex' : 'none';
+  };
 
-  async function loadProductData() {
-    const pid = parseInt(sel.value);
-    const p   = await DB.getProduct(pid);
+  document.addEventListener('pointerdown', function closeTipo(e) {
+    if (!e.target.closest('#stockTipoWrap')) {
+      tipoList.classList.remove('open');
+      document.removeEventListener('pointerdown', closeTipo);
+    }
+  });
+
+  // ── Cargar datos del producto seleccionado ────────────────
+  async function loadProductData(pid) {
+    if (!pid) return;
+    const p = await DB.getProduct(pid);
     if (!p) return;
     adjProdId = pid;
     document.getElementById('modalStockTitle').textContent = `Stock · ${p.name}`;
-    document.getElementById('stockCosto').value    = p.cost || '';
+    document.getElementById('stockCosto').value = p.cost || '';
     document.getElementById('stockActualVal').textContent = `${p.stock} ${p.base_unit}(s)`;
-
     const info = await DB.getLotsInfo(pid);
     const prev = document.getElementById('lotsPreview');
     if (info.lots.length > 0) {
@@ -752,23 +822,28 @@ async function openStockAdj(id = null) {
     }
   }
 
-  sel.onchange = loadProductData;
-  await loadProductData();
+  // Si se abre desde una tarjeta de producto específico
+  if (id) {
+    const p = all.find(p => p.id === id);
+    if (p) {
+      prodInput.value  = p.name;
+      prodHidden.value = p.id;
+      await loadProductData(id);
+    }
+    document.getElementById('stockProductoGroup').style.display = 'none';
+  } else {
+    document.getElementById('stockProductoGroup').style.display = 'flex';
+  }
 
-  document.getElementById('stockTipo').value     = 'entrada';
+  document.getElementById('stockCostoGroup').style.display = 'flex';
   document.getElementById('stockCantidad').value = '';
   document.getElementById('stockNotas').value    = '';
-
-  const costoGroup = document.getElementById('stockCostoGroup');
-  document.getElementById('stockTipo').onchange = e => {
-    costoGroup.style.display = e.target.value === 'entrada' ? 'flex' : 'none';
-  };
-  costoGroup.style.display = 'flex';
 
   openModal('modalStock');
 }
 
 async function saveStockAdj() {
+  if (!adjProdId) { toast('Selecciona un producto de la lista', 'error'); return; }
   const tipo = document.getElementById('stockTipo').value;
   const qty  = parseInt(document.getElementById('stockCantidad').value);
   const nota = document.getElementById('stockNotas').value.trim();
