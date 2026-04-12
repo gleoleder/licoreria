@@ -6,6 +6,7 @@
 let cart       = [];          // { product, barcode, qty, lineTotal }
 let editProdId = null;        // id del producto en edición
 let adjProdId  = null;        // id del producto en ajuste stock
+let invSort    = { col: 'name', dir: 1 }; // ordenamiento de inventario
 let lastSaleId = null;        // último ID de venta para ticket
 let payMethod  = 'efectivo';
 
@@ -688,27 +689,80 @@ function deleteProduct(id) {
 //  INVENTARIO
 // ─────────────────────────────────────────────────────────────
 
+function invSortVal(p, col) {
+  if (col === 'name')     return p.name.toLowerCase();
+  if (col === 'category') return p.category.toLowerCase();
+  if (col === 'stock')    return p.stock;
+  if (col === 'min_stock')return p.min_stock;
+  if (col === 'status')   return p.stock <= 0 ? 0 : p.stock <= p.min_stock ? 1 : 2;
+  return '';
+}
+
+function invRowHTML(p) {
+  const stockClass = p.stock <= 0 ? 'badge-out' : p.stock <= p.min_stock ? 'badge-low' : 'badge-ok';
+  const stockLabel = p.stock <= 0 ? 'Agotado' : p.stock <= p.min_stock ? 'Stock bajo' : 'OK';
+  const stockColor = p.stock <= 0 ? 'var(--red)' : p.stock <= p.min_stock ? 'var(--amber)' : 'var(--green)';
+  return `<td><strong>${p.name}</strong></td>
+    <td>${p.category}</td>
+    <td>${p.base_unit}</td>
+    <td style="font-family:var(--mono);font-weight:600;color:${stockColor}">${p.stock}</td>
+    <td style="color:var(--text3)">${p.min_stock}</td>
+    <td><span class="badge-status ${stockClass}">${stockLabel}</span></td>
+    <td><button class="btn-icon-sm" onclick="openEditProduct(${p.id})">✏</button></td>`;
+}
+
 async function renderInventory(filter = '') {
-  const all   = await DB.getActiveProducts();
-  const items = filter ? all.filter(p => p.name.toLowerCase().includes(filter.toLowerCase())) : all;
+  const all = await DB.getActiveProducts();
+  let items = filter ? all.filter(p => p.name.toLowerCase().includes(filter.toLowerCase())) : all;
+
+  // Ordenar según columna activa
+  items = [...items].sort((a, b) => {
+    const va = invSortVal(a, invSort.col);
+    const vb = invSortVal(b, invSort.col);
+    return va < vb ? -invSort.dir : va > vb ? invSort.dir : 0;
+  });
+
+  // Actualizar indicadores visuales en cabeceras
+  document.querySelectorAll('#invTable .th-sort').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.col === invSort.col) {
+      th.classList.add(invSort.dir === 1 ? 'sort-asc' : 'sort-desc');
+    }
+  });
+
   const tbody = document.getElementById('invBody');
 
-  tbody.innerHTML = items.map(p => {
-    const stockClass  = p.stock <= 0 ? 'badge-out' : p.stock <= p.min_stock ? 'badge-low' : 'badge-ok';
-    const stockLabel  = p.stock <= 0 ? 'Agotado' : p.stock <= p.min_stock ? 'Stock bajo' : 'OK';
-    const rowAlert = p.stock <= p.min_stock ? 'stock-alert-row' : '';
-    return `<tr class="${rowAlert}">
-      <td><strong>${p.name}</strong></td>
-      <td>${p.category}</td>
-      <td>${p.base_unit}</td>
-      <td style="font-family:var(--mono);font-weight:600;color:${p.stock <= 0 ? 'var(--red)' : p.stock <= p.min_stock ? 'var(--amber)' : 'var(--green)'}">${p.stock}</td>
-      <td style="color:var(--text3)">${p.min_stock}</td>
-      <td><span class="badge-status ${stockClass}">${stockLabel}</span></td>
-      <td>
-        <button class="btn-icon-sm" onclick="openEditProduct(${p.id})">✏</button>
-      </td>
-    </tr>`;
-  }).join('');
+  // Render diferencial: solo actualiza filas que cambiaron — sin parpadeo
+  const existing = new Map();
+  for (const tr of tbody.querySelectorAll('tr[data-pid]')) {
+    existing.set(tr.dataset.pid, tr);
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const p of items) {
+    const key = String(p.id);
+    const sig = `${p.name}|${p.stock}|${p.min_stock}|${p.category}|${p.base_unit}`;
+    let tr = existing.get(key);
+    existing.delete(key);
+
+    if (!tr) {
+      tr = document.createElement('tr');
+      tr.dataset.pid = key;
+    }
+
+    if (tr.dataset.sig !== sig) {
+      tr.dataset.sig = sig;
+      tr.className = p.stock <= p.min_stock ? 'stock-alert-row' : '';
+      tr.innerHTML = invRowHTML(p);
+    }
+    fragment.appendChild(tr);
+  }
+
+  // Eliminar filas que ya no existen
+  for (const tr of existing.values()) tr.remove();
+
+  // Un solo repaint
+  tbody.appendChild(fragment);
 }
 
 async function openStockAdj(id = null) {
@@ -1044,6 +1098,16 @@ async function init() {
   // Búsquedas
   document.getElementById('prodSearch').addEventListener('input', e => renderProducts(e.target.value));
   document.getElementById('invSearch').addEventListener('input', e => renderInventory(e.target.value));
+
+  // Ordenar inventario por columna
+  document.querySelectorAll('#invTable .th-sort').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (invSort.col === col) invSort.dir *= -1;
+      else { invSort.col = col; invSort.dir = 1; }
+      renderInventory(document.getElementById('invSearch').value);
+    });
+  });
 
   // Sincronizar catálogo desde Google Sheets (hoja "Catalogo")
   document.getElementById('btnSyncSheets').addEventListener('click', async () => {

@@ -369,6 +369,17 @@ html, body {
 .data-table {
   width: 100%; border-collapse: collapse; font: 400 .85rem var(--f);
 }
+.th-sort {
+  cursor: pointer; user-select: none;
+  transition: color .15s;
+}
+.th-sort:hover { color: var(--text2); }
+.th-sort.sort-asc,
+.th-sort.sort-desc { color: var(--amber); }
+.sort-icon::after { content: ''; margin-left: 4px; opacity: .4; font-size: .7em; }
+.th-sort.sort-asc  .sort-icon::after { content: '▲'; opacity: 1; }
+.th-sort.sort-desc .sort-icon::after { content: '▼'; opacity: 1; }
+
 .data-table th {
   padding: 10px 16px; text-align: left;
   font: 600 .72rem var(--f); color: var(--text3);
