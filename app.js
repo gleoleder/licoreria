@@ -633,17 +633,57 @@ function toggleCatSection(headerEl, cat) {
   else            collapsedCats.delete(cat);
 }
 
+function _setupMargenListener(costoRef) {
+  // costoRef: función que devuelve el costo actual (desde lote o input)
+  const fpPrecio   = document.getElementById('fpPrecio');
+  const fpMargen   = document.getElementById('fpMargen');
+  const handler = () => {
+    const precio = parseFloat(fpPrecio.value);
+    const costo  = costoRef();
+    if (!isNaN(precio) && !isNaN(costo) && costo > 0) {
+      const gan = precio - costo;
+      const pct = (gan / precio * 100).toFixed(1);
+      const color = gan >= 0 ? 'var(--green)' : 'var(--red)';
+      fpMargen.style.display = 'block';
+      fpMargen.innerHTML = `<span style="color:${color};font-size:0.8rem">
+        Ganancia: <b>Bs ${gan.toFixed(2)}</b> &nbsp;|&nbsp; Margen: <b>${pct}%</b>
+        <span style="color:var(--text3)">(sobre precio venta, costo lote Bs ${costo.toFixed(2)})</span>
+      </span>`;
+    } else if (!isNaN(precio) && costo === 0) {
+      fpMargen.style.display = 'block';
+      fpMargen.innerHTML = `<span style="color:var(--text3);font-size:0.8rem">Sin costo registrado — ingresa el costo para ver el margen.</span>`;
+    } else {
+      fpMargen.style.display = 'none';
+    }
+  };
+  fpPrecio.removeEventListener('input', fpPrecio._margenHandler || null);
+  fpPrecio._margenHandler = handler;
+  fpPrecio.addEventListener('input', handler);
+  handler(); // disparo inicial
+}
+
 function openNewProduct() {
   editProdId = null;
   document.getElementById('modalProdTitle').textContent = 'Nuevo Producto';
-  document.getElementById('fpNombre').value   = '';
+  document.getElementById('fpNombre').value    = '';
   document.getElementById('fpCategoria').value = 'cerveza';
-  document.getElementById('fpUnidad').value   = '';
-  document.getElementById('fpCosto').value    = '';
-  document.getElementById('fpPrecio').value   = '';
-  document.getElementById('fpStock').value    = '0';
-  document.getElementById('fpStockMin').value = '0';
+  document.getElementById('fpUnidad').value    = '';
+  document.getElementById('fpCosto').value     = '';
+  document.getElementById('fpPrecio').value    = '';
+  document.getElementById('fpStock').value     = '0';
+  document.getElementById('fpStockMin').value  = '0';
   document.getElementById('barcodesList').innerHTML = '';
+  // Modo nuevo: costo editable, stock visible, sin info de lotes
+  const fpCosto     = document.getElementById('fpCosto');
+  const fpCostoInfo = document.getElementById('fpCostoInfo');
+  const fpMargen    = document.getElementById('fpMargen');
+  const fpStockGroup = document.getElementById('fpStockGroup');
+  fpCosto.readOnly     = false;
+  fpCosto.style.color  = '';
+  fpCostoInfo.style.display = 'none';
+  fpMargen.style.display    = 'none';
+  fpStockGroup.style.display = '';
+  _setupMargenListener(() => parseFloat(document.getElementById('fpCosto').value) || 0);
   openModal('modalProducto');
 }
 
@@ -655,10 +695,64 @@ async function openEditProduct(id) {
   document.getElementById('fpNombre').value    = p.name;
   document.getElementById('fpCategoria').value = p.category;
   document.getElementById('fpUnidad').value    = p.base_unit;
-  document.getElementById('fpCosto').value     = p.cost;
   document.getElementById('fpPrecio').value    = p.price;
-  document.getElementById('fpStock').value     = p.stock;
   document.getElementById('fpStockMin').value  = p.min_stock;
+
+  const fpCosto      = document.getElementById('fpCosto');
+  const fpCostoInfo  = document.getElementById('fpCostoInfo');
+  const fpMargen     = document.getElementById('fpMargen');
+  const fpStockGroup = document.getElementById('fpStockGroup');
+
+  // Siempre ocultar stock inicial en modo edición
+  fpStockGroup.style.display = 'none';
+
+  const info = await DB.getLotsInfo(id);
+  let costoRef;
+
+  if (info.lots.length > 0) {
+    // Hay lotes activos → mostrar costo del lote más antiguo (FIFO)
+    const oldest = info.lots[0]; // getLotsByProduct los ordena por fecha ASC
+    fpCosto.value    = oldest.cost.toFixed(2);
+    fpCosto.readOnly = true;
+    fpCosto.style.color = 'var(--cyan)';
+    costoRef = () => oldest.cost;
+
+    // Resumen de lotes
+    const lotLines = info.lots.map((l, i) => {
+      const badge = i === 0
+        ? `<span style="background:var(--cyan);color:#000;border-radius:4px;padding:0 5px;font-size:0.7rem;margin-left:4px">FIFO activo</span>`
+        : '';
+      return `<div style="display:flex;gap:8px;align-items:center;padding:2px 0;font-size:0.78rem">
+        <span style="color:var(--text3)">#${i+1}</span>
+        <span style="color:var(--cyan);font-weight:600">Bs ${l.cost.toFixed(2)}/u</span>
+        <span style="color:var(--text3)">${l.qty_remaining} ud. restantes</span>
+        <span style="color:var(--text3)">${l.date || ''}</span>
+        ${badge}
+      </div>`;
+    }).join('');
+
+    fpCostoInfo.style.display = 'block';
+    fpCostoInfo.innerHTML = `
+      <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;margin-top:4px">
+        <div style="font-size:0.75rem;color:var(--text3);margin-bottom:4px">Lotes activos (${info.lots.length}) — el costo FIFO más antiguo define la ganancia:</div>
+        ${lotLines}
+        ${info.lots.length > 1 ? `<div style="font-size:0.72rem;color:var(--text3);margin-top:4px">Costo promedio ponderado: Bs ${info.avgCost.toFixed(2)}/u</div>` : ''}
+      </div>`;
+  } else {
+    // Sin lotes: usar costo estático del producto
+    fpCosto.value    = p.cost || '';
+    fpCosto.readOnly = false;
+    fpCosto.style.color = '';
+    costoRef = () => parseFloat(document.getElementById('fpCosto').value) || 0;
+
+    fpCostoInfo.style.display = p.cost > 0 ? 'none' : 'block';
+    if (p.cost <= 0) {
+      fpCostoInfo.innerHTML = `<span style="color:var(--text3);font-size:0.78rem">Sin lotes registrados — puedes ingresar un costo de referencia.</span>`;
+    }
+  }
+
+  _setupMargenListener(costoRef);
+
   // Cargar códigos de barras
   const bl = document.getElementById('barcodesList');
   bl.innerHTML = '';
@@ -692,11 +786,23 @@ async function saveProduct() {
     if (code) barcodes.push({ code, multiplier: mult, label: lbl });
   });
 
+  // Si estamos editando y fpCosto es readonly (hay lotes), no pisar el costo almacenado
+  const fpCosto    = document.getElementById('fpCosto');
+  const hasCostReadonly = fpCosto.readOnly && editProdId;
+  let costValue = 0;
+  if (hasCostReadonly) {
+    // Conservar el costo que ya tiene el producto (no lo sobreescribimos)
+    const existing = await DB.getProduct(editProdId);
+    costValue = existing ? existing.cost : 0;
+  } else {
+    costValue = parseFloat(fpCosto.value) || 0;
+  }
+
   const prod = {
     name,
     category:   document.getElementById('fpCategoria').value,
     base_unit:  document.getElementById('fpUnidad').value.trim() || 'unidad',
-    cost:       parseFloat(document.getElementById('fpCosto').value)  || 0,
+    cost:       costValue,
     price,
     stock:      parseInt(document.getElementById('fpStock').value)    || 0,
     min_stock:  parseInt(document.getElementById('fpStockMin').value) || 0,
