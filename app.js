@@ -61,10 +61,12 @@ const SHEETS = {
     if (!sid) return null;
     const url = `https://docs.google.com/spreadsheets/d/${sid}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
     const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (res.status === 404 || res.status === 401 || res.status === 403)
+      throw new Error('El Sheet no es público (error ' + res.status + '). Ve a Compartir → "Cualquier persona con el enlace puede VER".');
+    if (!res.ok) throw new Error(`Error del servidor (${res.status}). Verifica el SHEETS_ID en config.js.`);
     const raw = await res.text();
-    if (raw.includes('<html') || raw.includes('signin'))
-      throw new Error('El Sheet no es público. Compartir → "Cualquier persona puede ver".');
+    if (raw.includes('<html') || raw.includes('signin') || raw.includes('accounts.google'))
+      throw new Error('El Sheet no es público. Ve a Compartir → "Cualquier persona con el enlace puede VER".');
     const json = JSON.parse(raw.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, ''));
     if (json.status === 'error')
       throw new Error(json.errors?.[0]?.detailed_message || 'Error en Sheets');
