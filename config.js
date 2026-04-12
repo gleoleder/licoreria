@@ -14,4 +14,4 @@
 //  Para desactivar la sincronización deja la cadena vacía: ''
 // ───────────────────────────────────────────────────────────────
 
-var SHEETS_URL = '';
+var SHEETS_URL = 'https://script.google.com/macros/s/AKfycbz3Uy6j0a5MJaZ2kyLQa0ehweQ8yAKlaKmmIzUqjAn4WtNP6Yh4BRETXkIbqRB68IAPFQ/exec';
