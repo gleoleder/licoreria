@@ -306,14 +306,14 @@ html, body {
 }
 .cat-section-header:hover { background: var(--surface); }
 .cat-section-title {
-  font: 700 .82rem var(--f); text-transform: uppercase;
-  letter-spacing: .07em; color: var(--text2);
+  font: 700 1.05rem var(--f); text-transform: uppercase;
+  letter-spacing: .08em; color: var(--text);
 }
 .cat-section-count {
-  font: 400 .78rem var(--f); color: var(--text3); flex: 1;
+  font: 400 .88rem var(--f); color: var(--text3); flex: 1;
 }
 .cat-section-arrow {
-  color: var(--text3); font-size: .75rem;
+  color: var(--text3); font-size: .9rem;
   transition: transform .2s;
 }
 .cat-section-header.is-open .cat-section-arrow { transform: rotate(90deg); }
