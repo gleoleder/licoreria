@@ -856,23 +856,42 @@ async function openStockAdj(id = null) {
     if (!p) return;
     adjProdId = pid;
     document.getElementById('modalStockTitle').textContent = `Stock · ${p.name}`;
-    document.getElementById('stockCosto').value = p.cost || '';
     document.getElementById('stockActualVal').textContent = `${p.stock} ${p.base_unit}(s)`;
+
     const info = await DB.getLotsInfo(pid);
     const prev = document.getElementById('lotsPreview');
+
+    // Pre-rellenar costo con el del lote más reciente (no con p.cost que es solo referencia)
+    const lastLot = info.lots.length ? info.lots[info.lots.length - 1] : null;
+    document.getElementById('stockCosto').value = lastLot ? lastLot.cost : (p.cost || '');
+
     if (info.lots.length > 0) {
-      prev.innerHTML = `<div class="lots-title">Lotes activos (FIFO):</div>` +
-        info.lots.map(l => {
-          const d = new Date(l.date).toLocaleDateString('es-BO');
-          return `<div class="lot-row">
-            <span>${d}</span>
-            <span>Costo: <strong>Bs ${l.cost.toFixed(2)}</strong></span>
-            <span>${l.qty_remaining} uds. restantes</span>
-          </div>`;
-        }).join('') +
-        `<div class="lot-avg">Costo promedio ponderado: <strong>Bs ${info.avgCost.toFixed(2)}/ud.</strong></div>`;
+      // Ordenados por fecha: el más antiguo (FIFO próximo a consumirse) primero
+      const lotsHtml = info.lots.map((l, i) => {
+        const d    = new Date(l.date).toLocaleDateString('es-BO');
+        const esEl1 = i === 0;
+        return `<div class="lot-row ${esEl1 ? 'lot-oldest' : ''}">
+          <span class="lot-num">#${i + 1}</span>
+          <span class="lot-date">${d}</span>
+          <span class="lot-cost">Bs ${l.cost.toFixed(2)}/ud.</span>
+          <span class="lot-qty">${l.qty_remaining} uds.${esEl1 ? ' <span class="lot-fifo-badge">próximo</span>' : ''}</span>
+        </div>`;
+      }).join('');
+
+      prev.innerHTML =
+        `<div class="lots-title">Lotes activos — se venden en este orden (FIFO)</div>` +
+        lotsHtml +
+        `<div class="lot-avg">
+           <span>Total en stock: <strong>${info.units} uds.</strong></span>
+           <span>Costo prom. ponderado: <strong>Bs ${info.avgCost.toFixed(2)}/ud.</strong></span>
+         </div>
+         <div class="lot-new-notice">
+           ✦ Al hacer clic en "Aplicar" se crea un <strong>lote nuevo independiente</strong>
+           con el costo que ingreses arriba — los lotes anteriores no se modifican.
+         </div>`;
     } else {
-      prev.innerHTML = '';
+      prev.innerHTML = `<div class="lot-new-notice">Sin lotes registrados — este será el primer lote FIFO del producto.</div>`;
+      document.getElementById('stockCosto').value = p.cost || '';
     }
   }
 
