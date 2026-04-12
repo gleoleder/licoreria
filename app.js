@@ -971,57 +971,58 @@ async function init() {
   document.getElementById('invSearch').addEventListener('input', e => renderInventory(e.target.value));
 
   // Sincronizar catálogo desde Google Sheets (hoja "Catalogo")
-  // Lee el CSV público del sheet — no usa Apps Script (evita el problema de CORS/redirect)
   document.getElementById('btnSyncSheets').addEventListener('click', async () => {
     const sheetId = (typeof SHEETS_ID !== 'undefined' ? SHEETS_ID : '').trim();
     if (!sheetId) {
-      toast('Agrega SHEETS_ID en config.js con el ID de tu Google Sheet', 'error');
+      toast('Falta SHEETS_ID en config.js — lee las instrucciones', 'error');
       return;
     }
     const btn = document.getElementById('btnSyncSheets');
     btn.disabled = true;
     btn.textContent = '☁ Sincronizando...';
     try {
-      // gviz/tq con tqx=out:csv devuelve CSV directo con soporte CORS
-      // Requiere que el Sheet esté compartido como "Cualquier persona puede ver"
-      const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=Catalogo`;
-      const res = await fetch(csvUrl);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const csv = await res.text();
+      // gviz/tq devuelve JSON envuelto — funciona con sheets compartidos como "Cualquier persona puede ver"
+      const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=Catalogo`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`El servidor respondió con error ${res.status}. Verifica que el Sheet sea público.`);
+      const raw = await res.text();
 
-      // Parsear CSV (maneja comillas y comas dentro de campos)
-      const parseCSV = text => {
-        const lines = text.trim().split('\n');
-        return lines.slice(1).map(line => {
-          const cols = [];
-          let cur = '', inQ = false;
-          for (const ch of line) {
-            if (ch === '"') { inQ = !inQ; }
-            else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
-            else cur += ch;
-          }
-          cols.push(cur.trim());
-          return cols;
-        }).filter(r => r[0]);
-      };
+      // La respuesta viene envuelta: /*O_o*/\ngoogle.visualization.Query.setResponse({...});
+      if (raw.includes('<html') || raw.includes('signin')) {
+        throw new Error('El Sheet no es público. Ve a Compartir → "Cualquier persona con el enlace puede ver".');
+      }
+      const jsonStr = raw.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, '');
+      let parsed;
+      try { parsed = JSON.parse(jsonStr); } catch {
+        throw new Error('No se pudo leer la respuesta de Sheets. Verifica el ID y el nombre de la hoja.');
+      }
 
-      const rows = parseCSV(csv);
-      if (rows.length === 0) {
-        toast('La hoja "Catalogo" está vacía', 'error');
+      if (parsed.status === 'error') {
+        const msg = parsed.errors?.[0]?.detailed_message || parsed.errors?.[0]?.message || 'Error desconocido';
+        throw new Error(`Sheets respondió: ${msg}. Verifica que la hoja se llame exactamente "Catalogo".`);
+      }
+
+      const tableRows = parsed?.table?.rows || [];
+      if (tableRows.length === 0) {
+        toast('La hoja "Catalogo" está vacía — agrega productos ahí', 'error');
         return;
       }
 
+      const val = c => (c?.v !== null && c?.v !== undefined) ? String(c.v).trim() : '';
+
       let added = 0, updated = 0;
-      for (const r of rows) {
+      for (const row of tableRows) {
+        const c = row.c || [];
+        const name = val(c[0]);
+        if (!name) continue;
         const p = {
-          name:      r[0] || '',
-          category:  (r[1] || 'extra').toLowerCase().trim(),
-          base_unit: r[2] || 'unidad',
-          price:     parseFloat(r[3]) || 0,
-          cost:      parseFloat(r[4]) || 0,
-          stock_min: parseFloat(r[5]) || 0
+          name,
+          category:  (val(c[1]) || 'extra').toLowerCase(),
+          base_unit: val(c[2]) || 'unidad',
+          price:     parseFloat(val(c[3])) || 0,
+          cost:      parseFloat(val(c[4])) || 0,
+          stock_min: parseFloat(val(c[5])) || 0
         };
-        if (!p.name) continue;
         const existing = await DB.getProductByName(p.name);
         if (existing) {
           await DB.updateProduct({ ...existing, ...p, id: existing.id });
@@ -1035,7 +1036,7 @@ async function init() {
       renderProducts();
       renderInventory();
     } catch (err) {
-      toast('Error al sincronizar: ' + err.message, 'error');
+      toast(err.message, 'error');
     } finally {
       btn.disabled = false;
       btn.textContent = '☁ Sincronizar desde Sheets';
