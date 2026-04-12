@@ -910,8 +910,9 @@ function deleteProduct(id) {
 // ─────────────────────────────────────────────────────────────
 
 function invSortVal(p, col) {
-  if (col === 'name')     return p.name.toLowerCase();
-  if (col === 'category') return p.category.toLowerCase();
+  if (col === 'name')      return p.name.toLowerCase();
+  if (col === 'category')  return p.category.toLowerCase();
+  if (col === 'base_unit') return (p.base_unit || '').toLowerCase();
   if (col === 'stock')    return p.stock;
   if (col === 'min_stock')return p.min_stock;
   if (col === 'status')   return p.stock <= 0 ? 0 : p.stock <= p.min_stock ? 1 : 2;
