@@ -14,6 +14,6 @@
 //    "Cualquier persona con el enlace puede VER"
 // ───────────────────────────────────────────────────────────────
 
-var SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxsvbxSZfiQ4OoUTQ2MMigTHQmGxeJOTeJMKPONJfD4tSRhxouc1XuJxrdLsrXRj4As_Q/exec';
+var SHEETS_URL = 'https://script.google.com/macros/s/AKfycbw4n6NYBTzZ5Lm_cEUQ8Oq-q7EXLgjEG0syZFmSxg3RGzXBxNJQ6LX4tdofV8Cag1wgDg/exec';
 
-var SHEETS_ID  = 'AKfycbxsvbxSZfiQ4OoUTQ2MMigTHQmGxeJOTeJMKPONJfD4tSRhxouc1XuJxrdLsrXRj4As_Q';   // ← pega aquí el ID de tu Google Sheet
+var SHEETS_ID  = 'AKfycbw4n6NYBTzZ5Lm_cEUQ8Oq-q7EXLgjEG0syZFmSxg3RGzXBxNJQ6LX4tdofV8Cag1wgDg';   // ← pega aquí el ID de tu Google Sheet
