@@ -674,14 +674,16 @@ function openNewProduct() {
   document.getElementById('fpStockMin').value  = '0';
   document.getElementById('barcodesList').innerHTML = '';
   // Modo nuevo: costo editable, stock visible, sin info de lotes
-  const fpCosto     = document.getElementById('fpCosto');
-  const fpCostoInfo = document.getElementById('fpCostoInfo');
-  const fpMargen    = document.getElementById('fpMargen');
+  const fpCosto      = document.getElementById('fpCosto');
+  const fpCostoGroup = document.getElementById('fpCostoGroup');
+  const fpCostoInfo  = document.getElementById('fpCostoInfo');
+  const fpMargen     = document.getElementById('fpMargen');
   const fpStockGroup = document.getElementById('fpStockGroup');
-  fpCosto.readOnly     = false;
-  fpCosto.style.color  = '';
-  fpCostoInfo.style.display = 'none';
-  fpMargen.style.display    = 'none';
+  fpCostoGroup.style.display = '';
+  fpCosto.readOnly           = false;
+  fpCosto.style.color        = '';
+  fpCostoInfo.style.display  = 'none';
+  fpMargen.style.display     = 'none';
   fpStockGroup.style.display = '';
   _setupMargenListener(() => parseFloat(document.getElementById('fpCosto').value) || 0);
   openModal('modalProducto');
@@ -699,6 +701,7 @@ async function openEditProduct(id) {
   document.getElementById('fpStockMin').value  = p.min_stock;
 
   const fpCosto      = document.getElementById('fpCosto');
+  const fpCostoGroup = document.getElementById('fpCostoGroup');
   const fpCostoInfo  = document.getElementById('fpCostoInfo');
   const fpMargen     = document.getElementById('fpMargen');
   const fpStockGroup = document.getElementById('fpStockGroup');
@@ -710,22 +713,21 @@ async function openEditProduct(id) {
   let costoRef;
 
   if (info.lots.length > 0) {
-    // Hay lotes activos → mostrar costo del lote más antiguo (FIFO)
-    const oldest = info.lots[0]; // getLotsByProduct los ordena por fecha ASC
+    // Hay lotes activos → ocultar campo costo, mostrar resumen de lotes
+    const oldest = info.lots[0];
+    fpCostoGroup.style.display = 'none';
     fpCosto.value    = oldest.cost.toFixed(2);
     fpCosto.readOnly = true;
-    fpCosto.style.color = 'var(--cyan)';
     costoRef = () => oldest.cost;
 
-    // Resumen de lotes
     const lotLines = info.lots.map((l, i) => {
       const badge = i === 0
-        ? `<span style="background:var(--cyan);color:#000;border-radius:4px;padding:0 5px;font-size:0.7rem;margin-left:4px">FIFO activo</span>`
+        ? `<span style="background:var(--cyan);color:#000;border-radius:4px;padding:0 5px;font-size:0.7rem;margin-left:4px">próximo a consumir</span>`
         : '';
       return `<div style="display:flex;gap:8px;align-items:center;padding:2px 0;font-size:0.78rem">
         <span style="color:var(--text3)">#${i+1}</span>
         <span style="color:var(--cyan);font-weight:600">Bs ${l.cost.toFixed(2)}/u</span>
-        <span style="color:var(--text3)">${l.qty_remaining} ud. restantes</span>
+        <span style="color:var(--text3)">${l.qty_remaining} ud.</span>
         <span style="color:var(--text3)">${l.date || ''}</span>
         ${badge}
       </div>`;
@@ -733,22 +735,19 @@ async function openEditProduct(id) {
 
     fpCostoInfo.style.display = 'block';
     fpCostoInfo.innerHTML = `
-      <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;margin-top:4px">
-        <div style="font-size:0.75rem;color:var(--text3);margin-bottom:4px">Lotes activos (${info.lots.length}) — el costo FIFO más antiguo define la ganancia:</div>
+      <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;margin-bottom:6px">
+        <div style="font-size:0.75rem;color:var(--text3);margin-bottom:4px">Lotes activos (${info.lots.length}) — el costo del primero define la ganancia:</div>
         ${lotLines}
-        ${info.lots.length > 1 ? `<div style="font-size:0.72rem;color:var(--text3);margin-top:4px">Costo promedio ponderado: Bs ${info.avgCost.toFixed(2)}/u</div>` : ''}
+        ${info.lots.length > 1 ? `<div style="font-size:0.72rem;color:var(--text3);margin-top:4px">Promedio ponderado: Bs ${info.avgCost.toFixed(2)}/u</div>` : ''}
       </div>`;
   } else {
-    // Sin lotes: usar costo estático del producto
+    // Sin lotes: campo costo editable
+    fpCostoGroup.style.display = '';
     fpCosto.value    = p.cost || '';
     fpCosto.readOnly = false;
     fpCosto.style.color = '';
+    fpCostoInfo.style.display = 'none';
     costoRef = () => parseFloat(document.getElementById('fpCosto').value) || 0;
-
-    fpCostoInfo.style.display = p.cost > 0 ? 'none' : 'block';
-    if (p.cost <= 0) {
-      fpCostoInfo.innerHTML = `<span style="color:var(--text3);font-size:0.78rem">Sin lotes registrados — puedes ingresar un costo de referencia.</span>`;
-    }
   }
 
   _setupMargenListener(costoRef);
