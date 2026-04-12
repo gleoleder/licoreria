@@ -71,6 +71,7 @@ function doPost(e) {
 
     if      (action === 'addSale')       addSale(ss, data);
     else if (action === 'syncProducts')  syncProducts(ss, data);
+    else if (action === 'syncLots')      syncLots(ss, data);
     else if (action === 'addMovement')   addMovement(ss, data);
 
     return ContentService
@@ -127,6 +128,32 @@ function syncProducts(ss, products) {
 
   for (const p of products) {
     sh.appendRow([p.id, p.name, p.category, p.base_unit, p.cost, p.price, p.stock]);
+  }
+}
+
+// ── Lotes FIFO ───────────────────────────────────────────────
+// Reemplaza la hoja "Lotes" con el estado actual completo
+// Columnas: ID_Lote | Fecha_creacion | Producto | Fecha | Costo/ud | Inicial | Restante | Notas
+function syncLots(ss, lots) {
+  let sh = ss.getSheetByName('Lotes');
+  if (!sh) sh = ss.insertSheet('Lotes');
+  sh.clearContents();
+  const headers = ['ID_Lote','Fecha_creacion','Producto','Fecha_compra','Costo_ud_Bs','Qty_inicial','Qty_restante','Notas'];
+  sh.appendRow(headers);
+  sh.getRange(1,1,1,headers.length)
+    .setFontWeight('bold').setBackground('#0D1117').setFontColor('#00E5CC');
+  sh.setFrozenRows(1);
+  for (const l of lots) {
+    sh.appendRow([
+      l.id || '',
+      new Date().toISOString(),
+      l.product_name || '',
+      l.date || '',
+      l.cost || 0,
+      l.qty_initial || 0,
+      l.qty_remaining || 0,
+      l.notes || ''
+    ]);
   }
 }
 

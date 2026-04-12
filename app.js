@@ -16,24 +16,127 @@ const fmtN = n => Number(n).toFixed(2);
 
 // ── Google Sheets sync ─────────────────────────────────────────
 const SHEETS = {
-  url()  { return (typeof SHEETS_URL !== 'undefined' ? SHEETS_URL : '') || ''; },
+  url() { return (typeof SHEETS_URL !== 'undefined' ? SHEETS_URL : '') || ''; },
+  id()  { return (typeof SHEETS_ID  !== 'undefined' ? SHEETS_ID  : '') || ''; },
+
+  // Envío fire-and-forget a Apps Script (no-cors — no podemos leer la respuesta)
   async send(action, data) {
     const url = this.url();
     if (!url) return;
     try {
-      // URLSearchParams → application/x-www-form-urlencoded
-      // Es el único encoding que Apps Script lee de forma confiable en e.parameter
       const params = new URLSearchParams();
       params.append('action', action);
       params.append('data', JSON.stringify(data));
       await fetch(url, { method: 'POST', mode: 'no-cors', body: params });
-    } catch (e) {
-      console.warn('Sheets sync error:', e);
-    }
+    } catch (e) { console.warn('Sheets sync error:', e); }
   },
+
+  // Sincronizar hoja Productos (estado completo con stock actual)
   async syncProducts() {
     const prods = await DB.getActiveProducts();
     await this.send('syncProducts', prods);
+  },
+
+  // Sincronizar hoja Lotes (todos los lotes FIFO con cantidades restantes)
+  async syncLots() {
+    const lots = await DB.getLots();
+    const prods = await DB.getActiveProducts();
+    // Incluir nombre de producto para poder recuperar en otro dispositivo
+    const lotsConNombre = lots.map(l => {
+      const p = prods.find(p => p.id === l.product_id);
+      return { ...l, product_name: p ? p.name : '' };
+    });
+    await this.send('syncLots', lotsConNombre);
+  },
+
+  // Sincronizar todo en segundo plano después de cualquier cambio de inventario
+  syncAll() {
+    this.syncProducts();
+    this.syncLots();
+  },
+
+  // Leer hoja desde Sheets con gviz/tq (requiere sheet público)
+  async readSheet(sheetName) {
+    const sid = this.id();
+    if (!sid) return null;
+    const url = `https://docs.google.com/spreadsheets/d/${sid}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const raw = await res.text();
+    if (raw.includes('<html') || raw.includes('signin'))
+      throw new Error('El Sheet no es público. Compartir → "Cualquier persona puede ver".');
+    const json = JSON.parse(raw.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, ''));
+    if (json.status === 'error')
+      throw new Error(json.errors?.[0]?.detailed_message || 'Error en Sheets');
+    return json.table;
+  },
+
+  // Cargar estado completo desde Sheets a IndexedDB (para nuevo dispositivo)
+  async loadState(onProgress) {
+    onProgress('Leyendo productos desde Sheets…');
+    const prodTable = await this.readSheet('Productos');
+    const lotTable  = await this.readSheet('Lotes');
+
+    const val = c => (c?.v !== null && c?.v !== undefined) ? String(c.v).trim() : '';
+    const num = c => parseFloat(val(c)) || 0;
+
+    // Reconstruir productos
+    const prodRows = (prodTable?.rows || []).filter(r => r.c?.[1]?.v); // col B = Nombre
+    onProgress(`Importando ${prodRows.length} productos…`);
+
+    for (const row of prodRows) {
+      const c = row.c || [];
+      const name = val(c[1]);
+      if (!name) continue;
+      const p = {
+        name,
+        category:  val(c[2]) || 'extra',
+        base_unit: val(c[3]) || 'unidad',
+        cost:      num(c[4]),
+        price:     num(c[5]),
+        stock:     num(c[6]),
+        barcodes:  [],
+        active:    true
+      };
+      const existing = await DB.getProductByName(p.name);
+      if (existing) {
+        await DB.updateProduct({ ...existing, ...p, id: existing.id, barcodes: existing.barcodes || [] });
+      } else {
+        await DB.addProduct(p);
+      }
+    }
+
+    // Reconstruir lotes FIFO
+    const lotRows = (lotTable?.rows || []).filter(r => r.c?.[2]?.v); // col C = product_name
+    onProgress(`Importando ${lotRows.length} lotes FIFO…`);
+
+    for (const row of lotRows) {
+      const c = row.c || [];
+      const productName = val(c[2]);
+      if (!productName) continue;
+      const prod = await DB.getProductByName(productName);
+      if (!prod) continue;
+
+      const lotData = {
+        product_id:    prod.id,
+        date:          val(c[3]) || new Date().toISOString(),
+        cost:          num(c[4]),
+        qty_initial:   num(c[5]),
+        qty_remaining: num(c[6]),
+        notes:         val(c[7]) || ''
+      };
+
+      // Evitar duplicar lotes: compara fecha+costo+producto
+      const existing = await DB.getLotsByProduct(prod.id);
+      const dup = existing.find(l =>
+        l.cost === lotData.cost &&
+        l.qty_initial === lotData.qty_initial &&
+        l.date.slice(0, 10) === lotData.date.slice(0, 10)
+      );
+      if (!dup) await DB._add('lots', lotData);
+    }
+
+    onProgress('¡Listo!');
   }
 };
 
@@ -397,7 +500,8 @@ async function processSale() {
   };
 
   lastSaleId = await DB.addSale(sale);
-  SHEETS.send('addSale', { ...sale, id: lastSaleId }); // sync en segundo plano
+  SHEETS.send('addSale', { ...sale, id: lastSaleId });
+  SHEETS.syncAll(); // stock y lotes cambiaron
   toast(`Venta registrada · ${fmt(total)}`, 'success');
 
   // Mostrar ticket
@@ -602,6 +706,7 @@ async function saveProduct() {
 
   if (editProdId) prod.id = editProdId;
   await DB.saveProduct(prod);
+  SHEETS.syncProducts();
   closeModal('modalProducto');
   toast(editProdId ? 'Producto actualizado' : 'Producto creado', 'success');
   renderProducts(document.getElementById('prodSearch').value);
@@ -944,6 +1049,7 @@ async function saveStockAdj() {
     toast('Stock ajustado', 'success');
   }
 
+  SHEETS.syncAll(); // stock y lotes cambiaron
   closeModal('modalStock');
   renderInventory(document.getElementById('invSearch').value);
 }
@@ -1201,7 +1307,25 @@ async function init() {
     }
   });
 
-  // Google Sheets: URL configurada en config.js
+  // Cargar estado completo desde Sheets (productos + stock + lotes)
+  document.getElementById('btnLoadState').addEventListener('click', async () => {
+    if (!SHEETS.id()) { toast('Configura SHEETS_ID en config.js', 'error'); return; }
+    const btn = document.getElementById('btnLoadState');
+    btn.disabled = true;
+    try {
+      await SHEETS.loadState(msg => {
+        btn.textContent = msg;
+      });
+      toast('Estado cargado desde Sheets', 'success');
+      renderProducts();
+      renderInventory();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '☁ Cargar estado';
+    }
+  });
 
   // Botones producto
   document.getElementById('btnNuevoProducto').addEventListener('click', openNewProduct);
