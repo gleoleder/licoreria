@@ -633,6 +633,15 @@ function toggleCatSection(headerEl, cat) {
   else            collapsedCats.delete(cat);
 }
 
+// Poblar el <select id="fpCategoria"> desde CAT_ORDER/CAT_NAMES
+// y pre-seleccionar el valor indicado
+function populateCatSelect(selectedVal) {
+  const sel = document.getElementById('fpCategoria');
+  sel.innerHTML = CAT_ORDER.map(c =>
+    `<option value="${c}"${c === selectedVal ? ' selected' : ''}>${CAT_NAMES[c] || c}</option>`
+  ).join('');
+}
+
 function _setupMargenListener(costoRef) {
   // costoRef: función que devuelve el costo actual (desde lote o input)
   const fpPrecio   = document.getElementById('fpPrecio');
@@ -665,8 +674,8 @@ function _setupMargenListener(costoRef) {
 function openNewProduct() {
   editProdId = null;
   document.getElementById('modalProdTitle').textContent = 'Nuevo Producto';
+  populateCatSelect('cerveza');
   document.getElementById('fpNombre').value    = '';
-  document.getElementById('fpCategoria').value = 'cerveza';
   document.getElementById('fpUnidad').value    = '';
   document.getElementById('fpCosto').value     = '';
   document.getElementById('fpPrecio').value    = '';
@@ -694,8 +703,8 @@ async function openEditProduct(id) {
   if (!p) return;
   editProdId = id;
   document.getElementById('modalProdTitle').textContent = 'Editar Producto';
+  populateCatSelect(p.category || 'extra');
   document.getElementById('fpNombre').value    = p.name;
-  document.getElementById('fpCategoria').value = p.category;
   document.getElementById('fpUnidad').value    = p.base_unit;
   document.getElementById('fpPrecio').value    = p.price;
   document.getElementById('fpStockMin').value  = p.min_stock;
@@ -722,13 +731,14 @@ async function openEditProduct(id) {
 
     const lotLines = info.lots.map((l, i) => {
       const badge = i === 0
-        ? `<span style="background:var(--cyan);color:#000;border-radius:4px;padding:0 5px;font-size:0.7rem;margin-left:4px">próximo a consumir</span>`
+        ? `<span style="background:var(--cyan);color:#000;border-radius:4px;padding:0 5px;font-size:0.7rem;margin-left:4px">próximo</span>`
         : '';
+      const fecha = l.date ? new Date(l.date).toLocaleDateString('es-BO') : '—';
       return `<div style="display:flex;gap:8px;align-items:center;padding:2px 0;font-size:0.78rem">
         <span style="color:var(--text3)">#${i+1}</span>
         <span style="color:var(--cyan);font-weight:600">Bs ${l.cost.toFixed(2)}/u</span>
         <span style="color:var(--text3)">${l.qty_remaining} ud.</span>
-        <span style="color:var(--text3)">${l.date || ''}</span>
+        <span style="color:var(--text3)">${fecha}</span>
         ${badge}
       </div>`;
     }).join('');
