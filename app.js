@@ -79,6 +79,14 @@ const SHEETS = {
 
     const val = c => (c?.v !== null && c?.v !== undefined) ? String(c.v).trim() : '';
     const num = c => parseFloat(val(c)) || 0;
+    // gviz devuelve fechas como "Date(2026,3,12)" — mes 0-indexed
+    const parseDate = raw => {
+      if (!raw) return new Date().toISOString();
+      const m = raw.match(/^Date\((\d+),(\d+),(\d+)/);
+      if (m) return new Date(+m[1], +m[2], +m[3]).toISOString();
+      const d = new Date(raw);
+      return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    };
 
     // Reconstruir productos
     const prodRows = (prodTable?.rows || []).filter(r => r.c?.[1]?.v); // col B = Nombre
@@ -123,21 +131,26 @@ const SHEETS = {
 
       const lotData = {
         product_id:    prod.id,
-        date:          val(c[3]) || new Date().toISOString(),
+        date:          parseDate(val(c[3])),
         cost:          num(c[4]),
         qty_initial:   num(c[5]),
         qty_remaining: num(c[6]),
         notes:         val(c[7]) || ''
       };
 
-      // Evitar duplicar lotes: compara fecha+costo+producto
-      const existing = await DB.getLotsByProduct(prod.id);
-      const dup = existing.find(l =>
+      // Evitar duplicar lotes: compara fecha+costo+qty_inicial
+      const existingLots = await DB.getLotsByProduct(prod.id);
+      const dup = existingLots.find(l =>
         l.cost === lotData.cost &&
         l.qty_initial === lotData.qty_initial &&
         l.date.slice(0, 10) === lotData.date.slice(0, 10)
       );
-      if (!dup) await DB._add('lots', lotData);
+      if (!dup) {
+        await DB._add('lots', lotData);
+      } else {
+        // Actualizar qty_remaining con el valor del Sheet (puede haber cambiado en otro dispositivo)
+        await DB.saveLot({ ...dup, qty_remaining: lotData.qty_remaining });
+      }
     }
 
     onProgress('¡Listo!');
@@ -795,32 +808,38 @@ async function saveProduct() {
   document.querySelectorAll('.barcode-row').forEach(row => {
     const code = row.querySelector('.bc-code').value.trim();
     const mult = parseInt(row.querySelector('.bc-mult').value) || 1;
-    const lbl  = row.querySelector('.bc-label').value.trim();
+    const lbl  = row.querySelector('.bc-label').value.trim() || 'Individual';
     if (code) barcodes.push({ code, multiplier: mult, label: lbl });
   });
 
-  // Si estamos editando y fpCosto es readonly (hay lotes), no pisar el costo almacenado
-  const fpCosto    = document.getElementById('fpCosto');
-  const hasCostReadonly = fpCosto.readOnly && editProdId;
+  const fpCosto = document.getElementById('fpCosto');
   let costValue = 0;
-  if (hasCostReadonly) {
-    // Conservar el costo que ya tiene el producto (no lo sobreescribimos)
+  let stockValue = 0;
+
+  if (editProdId) {
+    // Al editar: siempre recuperar stock actual y cost de la BD para no sobreescribirlos
     const existing = await DB.getProduct(editProdId);
-    costValue = existing ? existing.cost : 0;
+    stockValue = existing ? (existing.stock || 0) : 0;
+    // cost: readonly = viene de lote (no cambiar), editable = usar lo del form
+    costValue = fpCosto.readOnly
+      ? (existing ? existing.cost : 0)
+      : (parseFloat(fpCosto.value) || 0);
   } else {
-    costValue = parseFloat(fpCosto.value) || 0;
+    // Producto nuevo: tomar stock del formulario
+    stockValue = parseInt(document.getElementById('fpStock').value) || 0;
+    costValue  = parseFloat(fpCosto.value) || 0;
   }
 
   const prod = {
     name,
-    category:   document.getElementById('fpCategoria').value,
-    base_unit:  document.getElementById('fpUnidad').value.trim() || 'unidad',
-    cost:       costValue,
+    category:  document.getElementById('fpCategoria').value,
+    base_unit: document.getElementById('fpUnidad').value.trim() || 'unidad',
+    cost:      costValue,
     price,
-    stock:      parseInt(document.getElementById('fpStock').value)    || 0,
-    min_stock:  parseInt(document.getElementById('fpStockMin').value) || 0,
+    stock:     stockValue,
+    min_stock: parseInt(document.getElementById('fpStockMin').value) || 0,
     barcodes,
-    active:     true
+    active:    true
   };
 
   if (editProdId) prod.id = editProdId;
@@ -891,11 +910,16 @@ function deleteProduct(id) {
         startTime = Date.now();
         rafId = requestAnimationFrame(animateHold);
         holdTimer = setTimeout(async () => {
+          // Eliminar también los lotes asociados para no dejar huérfanos
+          const lots = await DB.getLotsByProduct(id);
+          for (const l of lots) await DB._delete('lots', l.id);
           await DB.deleteProduct(id);
+          SHEETS.syncAll();
           closeModal('modalEliminar2');
           resetHold();
           toast(`"${p.name}" eliminado`, 'error');
           renderProducts();
+          renderInventory();
         }, HOLD_MS);
       }
 
@@ -927,8 +951,9 @@ function invRowHTML(p) {
   const stockClass = p.stock <= 0 ? 'badge-out' : p.stock <= p.min_stock ? 'badge-low' : 'badge-ok';
   const stockLabel = p.stock <= 0 ? 'Agotado' : p.stock <= p.min_stock ? 'Stock bajo' : 'OK';
   const stockColor = p.stock <= 0 ? 'var(--red)' : p.stock <= p.min_stock ? 'var(--amber)' : 'var(--green)';
+  const catName    = CAT_NAMES[p.category] || p.category;
   return `<td><strong>${p.name}</strong></td>
-    <td>${p.category}</td>
+    <td>${catName}</td>
     <td>${p.base_unit}</td>
     <td style="font-family:var(--mono);font-weight:600;color:${stockColor}">${p.stock}</td>
     <td style="color:var(--text3)">${p.min_stock}</td>
@@ -1405,11 +1430,19 @@ async function init() {
           base_unit: val(c[2]) || 'unidad',
           price:     parseFloat(val(c[3])) || 0,
           cost:      parseFloat(val(c[4])) || 0,
-          stock_min: parseFloat(val(c[5])) || 0
+          min_stock: parseFloat(val(c[5])) || 0
         };
         const existing = await DB.getProductByName(p.name);
         if (existing) {
-          await DB.updateProduct({ ...existing, ...p, id: existing.id });
+          // Preservar stock, barcodes y active — solo actualizar los campos del catálogo
+          await DB.updateProduct({
+            ...existing,
+            ...p,
+            id:       existing.id,
+            stock:    existing.stock    || 0,
+            barcodes: existing.barcodes || [],
+            active:   true
+          });
           updated++;
         } else {
           await DB.addProduct({ ...p, barcodes: [], stock: 0, active: true });
