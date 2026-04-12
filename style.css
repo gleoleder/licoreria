@@ -317,6 +317,12 @@ html, body {
   transition: transform .2s;
 }
 .cat-section-header.is-open .cat-section-arrow { transform: rotate(90deg); }
+/* Badge de categoría grande cuando está en el header de sección */
+.cat-section-header .pc-cat {
+  font-size: 1rem; font-weight: 700;
+  padding: 5px 16px; border-radius: 8px;
+  margin: 0; letter-spacing: .08em;
+}
 .cat-section-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));

@@ -7,6 +7,62 @@
 //  Copia la URL y pégala en POS → Configuración
 // ═══════════════════════════════════════════════════════════════
 
+// ── Leer catálogo de productos (GET) ────────────────────────
+// El POS llama: fetch(url + '?action=getProducts')
+// La hoja "Catalogo" debe tener esta cabecera en la fila 1:
+//   A: Nombre | B: Categoría | C: Unidad | D: Precio Bs | E: Costo Bs | F: Stock mín.
+// Categorías válidas: cerveza, bebida, vino, licor, singani, refresco, cigarrillo, extra
+function doGet(e) {
+  try {
+    const action = e.parameter.action;
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    if (action === 'getProducts') {
+      let sh = ss.getSheetByName('Catalogo');
+      if (!sh) {
+        // Crear la hoja con cabecera de ejemplo si no existe
+        sh = ss.insertSheet('Catalogo');
+        const headers = ['Nombre','Categoría','Unidad','Precio Bs','Costo Bs','Stock mín.'];
+        sh.appendRow(headers);
+        sh.getRange(1,1,1,headers.length)
+          .setFontWeight('bold').setBackground('#0D1117').setFontColor('#00E5CC');
+        sh.setFrozenRows(1);
+        return ContentService
+          .createTextOutput(JSON.stringify([]))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+
+      const rows = sh.getDataRange().getValues();
+      const products = [];
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        if (!r[0]) continue; // fila vacía
+        products.push({
+          name:      String(r[0]).trim(),
+          category:  String(r[1]).trim().toLowerCase() || 'extra',
+          base_unit: String(r[2]).trim() || 'unidad',
+          price:     parseFloat(r[3]) || 0,
+          cost:      parseFloat(r[4]) || 0,
+          stock_min: parseFloat(r[5]) || 0
+        });
+      }
+      return ContentService
+        .createTextOutput(JSON.stringify(products))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: true }))
+      .setMimeType(ContentService.MimeType.JSON);
+
+  } catch (err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: false, error: err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// ────────────────────────────────────────────────────────────
 function doPost(e) {
   try {
     const action = e.parameter.action;

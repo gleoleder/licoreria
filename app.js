@@ -970,19 +970,50 @@ async function init() {
   document.getElementById('prodSearch').addEventListener('input', e => renderProducts(e.target.value));
   document.getElementById('invSearch').addEventListener('input', e => renderInventory(e.target.value));
 
-  // Importar catálogo real
-  document.getElementById('btnImportarCatalogo').addEventListener('click', () => {
-    document.getElementById('modalImportar').style.display = 'flex';
-  });
-  document.getElementById('btnImportarCancelar').addEventListener('click', () => {
-    document.getElementById('modalImportar').style.display = 'none';
-  });
-  document.getElementById('btnImportarConfirmar').addEventListener('click', async () => {
-    document.getElementById('modalImportar').style.display = 'none';
-    const n = await DB.importarCatalogo();
-    toast(`${n} productos importados — completa precios en cada tarjeta`, 'success');
-    renderProducts();
-    renderInventory();
+  // Sincronizar catálogo desde Google Sheets (hoja "Catalogo")
+  document.getElementById('btnSyncSheets').addEventListener('click', async () => {
+    const url = SHEETS.url();
+    if (!url) { toast('Configura la URL de Sheets en config.js', 'error'); return; }
+    const btn = document.getElementById('btnSyncSheets');
+    btn.disabled = true;
+    btn.textContent = '☁ Sincronizando...';
+    try {
+      const res = await fetch(`${url}?action=getProducts`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const products = await res.json();
+      if (!Array.isArray(products) || products.length === 0) {
+        toast('No se encontraron productos en la hoja "Catalogo"', 'error');
+        return;
+      }
+      let added = 0, updated = 0;
+      for (const p of products) {
+        const existing = await DB.getProductByName(p.name);
+        if (existing) {
+          await DB.updateProduct({ ...existing, ...p });
+          updated++;
+        } else {
+          await DB.addProduct({
+            name: p.name,
+            category: p.category || 'extra',
+            base_unit: p.base_unit || 'unidad',
+            price: parseFloat(p.price) || 0,
+            cost: parseFloat(p.cost) || 0,
+            stock_min: parseFloat(p.stock_min) || 0,
+            barcodes: [],
+            active: true
+          });
+          added++;
+        }
+      }
+      toast(`Sheets → ${added} nuevos, ${updated} actualizados`, 'success');
+      renderProducts();
+      renderInventory();
+    } catch (err) {
+      toast('Error al conectar con Sheets: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '☁ Sincronizar desde Sheets';
+    }
   });
 
   // Google Sheets: URL configurada en config.js

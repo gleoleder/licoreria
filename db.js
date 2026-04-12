@@ -109,6 +109,13 @@ const DB = {
   getProduct(id)    { return this._get('products', id); },
   saveProduct(p)    { return this._put('products', p); },
   deleteProduct(id) { return this._delete('products', id); },
+  updateProduct(p)  { return this._put('products', p); },
+  addProduct(p)     { return this._add('products', p); },
+
+  async getProductByName(name) {
+    const all = await this.getProducts();
+    return all.find(p => p.name.toLowerCase().trim() === name.toLowerCase().trim()) || null;
+  },
 
   async getActiveProducts() {
     const all = await this.getProducts();
