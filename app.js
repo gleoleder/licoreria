@@ -88,6 +88,8 @@ const SHEETS = {
       const c = row.c || [];
       const name = val(c[1]);
       if (!name) continue;
+      let barcodes = [];
+      try { barcodes = JSON.parse(val(c[7]) || '[]'); } catch (_) {}
       const p = {
         name,
         category:  val(c[2]) || 'extra',
@@ -95,12 +97,14 @@ const SHEETS = {
         cost:      num(c[4]),
         price:     num(c[5]),
         stock:     num(c[6]),
-        barcodes:  [],
+        barcodes,
         active:    true
       };
       const existing = await DB.getProductByName(p.name);
       if (existing) {
-        await DB.updateProduct({ ...existing, ...p, id: existing.id, barcodes: existing.barcodes || [] });
+        // Si el Sheet trae barcodes, usarlos; si no, conservar los locales
+        const mergedBarcodes = barcodes.length > 0 ? barcodes : (existing.barcodes || []);
+        await DB.updateProduct({ ...existing, ...p, id: existing.id, barcodes: mergedBarcodes });
       } else {
         await DB.addProduct(p);
       }

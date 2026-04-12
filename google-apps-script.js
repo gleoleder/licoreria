@@ -120,14 +120,15 @@ function syncProducts(ss, products) {
   if (!sh) sh = ss.insertSheet('Productos');
   sh.clearContents();
 
-  const headers = ['ID','Nombre','Categoría','Unidad','Costo adq. Bs','Precio venta Bs','Stock'];
+  const headers = ['ID','Nombre','Categoría','Unidad','Costo adq. Bs','Precio venta Bs','Stock','Códigos'];
   sh.appendRow(headers);
   sh.getRange(1,1,1,headers.length)
     .setFontWeight('bold').setBackground('#0D1117').setFontColor('#00E5CC');
   sh.setFrozenRows(1);
 
   for (const p of products) {
-    sh.appendRow([p.id, p.name, p.category, p.base_unit, p.cost, p.price, p.stock]);
+    const codigosJson = JSON.stringify(p.barcodes || []);
+    sh.appendRow([p.id, p.name, p.category, p.base_unit, p.cost, p.price, p.stock, codigosJson]);
   }
 }
 
