@@ -202,7 +202,7 @@ function renderCart() {
 function initCartDeleteHold() {
   const list = document.getElementById('cartList');
   let timer = null, raf = null, start = null, activeBtn = null;
-  const HOLD = 2000;
+  const HOLD = 1000;
 
   function cancel() {
     clearTimeout(timer); cancelAnimationFrame(raf);
