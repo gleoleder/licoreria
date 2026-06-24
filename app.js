@@ -1,2830 +1,1290 @@
 // ═══════════════════════════════════════════════════════
-//  POS Licorería v2 — Lógica principal
+//  POS Licorería v3 — Lógica principal de UI
 // ═══════════════════════════════════════════════════════
-
-// ── Constantes ────────────────────────────────────────
-// Categorías por defecto (se usan si la hoja "Categorias" no existe o está vacía)
-const CAT_DEFAULTS = [
-  { key:'cerveza',   name:'Cervezas' },
-  { key:'bebida',    name:'Bebidas Preparadas' },
-  { key:'vino',      name:'Vinos' },
-  { key:'licor',     name:'Licores & Spirits' },
-  { key:'singani',   name:'Singani' },
-  { key:'refresco',  name:'Refrescos' },
-  { key:'cigarrillo',name:'Cigarrillos' },
-  { key:'snack',     name:'Snacks' },
-  { key:'extra',     name:'Extras' }
-];
-
-// Carga categorías desde localStorage (puestas por Sheets.loadCategorias) o usa defaults
-function getCats() {
-  try {
-    const saved = localStorage.getItem('pos_categorias');
-    if (saved) {
-      const arr = JSON.parse(saved);
-      if (arr.length) return arr;
-    }
-  } catch (_) {}
-  return CAT_DEFAULTS;
-}
-
-// CAT_ORDER y CAT_NAMES se recalculan dinámicamente desde getCats()
-// Se usan como getters para que siempre reflejen el estado actual
-function getCatOrder() { return getCats().map(c => c.key); }
-function getCatNames() {
-  const obj = {};
-  getCats().forEach(c => { obj[c.key] = c.name; });
-  return obj;
-}
-// Aliases para compatibilidad con el código existente (se evalúan en cada uso)
-let CAT_ORDER = getCatOrder();
-let CAT_NAMES = getCatNames();
-function refreshCats() {
-  CAT_ORDER = getCatOrder();
-  CAT_NAMES = getCatNames();
-  // Repoblar el select de categorías si el modal está abierto
-  const sel = document.getElementById('fpCat');
-  if (sel) populateCatSelect(sel, sel.value);
-}
-// Paleta de colores para categorías dinámicas
-// Cada color es [bg-rgba, text-hex]
-const _CAT_PALETTE = [
-  ['rgba(245,158,11,.18)',  '#F59E0B'],  // ámbar
-  ['rgba(63,185,80,.18)',   '#3FB950'],  // verde
-  ['rgba(248,81,73,.18)',   '#F85149'],  // rojo
-  ['rgba(188,140,255,.18)', '#BC8CFF'],  // violeta
-  ['rgba(0,229,204,.15)',   '#00E5CC'],  // cyan
-  ['rgba(56,189,248,.18)',  '#38BDF8'],  // azul claro
-  ['rgba(251,146,60,.18)',  '#FB923C'],  // naranja
-  ['rgba(236,72,153,.18)',  '#F472B6'],  // rosa
-  ['rgba(99,102,241,.18)',  '#818CF8'],  // índigo
-  ['rgba(5,150,105,.18)',   '#10B981'],  // esmeralda
-  ['rgba(234,179,8,.18)',   '#EAB308'],  // amarillo
-  ['rgba(239,68,68,.18)',   '#F87171'],  // rojo suave
-  ['rgba(20,184,166,.18)',  '#2DD4BF'],  // teal
-  ['rgba(168,85,247,.18)',  '#A855F7'],  // púrpura
-  ['rgba(251,191,36,.15)',  '#FBBF24'],  // dorado
-  ['rgba(148,163,184,.18)', '#94A3B8'],  // gris azulado
-];
-
-// Genera color determinista para cualquier clave de categoría
-// Mismo nombre → mismo color siempre
-function catColor(key) {
-  let hash = 0;
-  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) & 0xFFFF;
-  return _CAT_PALETTE[hash % _CAT_PALETTE.length];
-}
-
-// Devuelve el style inline para el badge de categoría
-function catStyle(key) {
-  const [bg, color] = catColor(key);
-  return `background:${bg};color:${color}`;
-}
-
-const TIPOS_MOV = [
-  { v:'entrada',    l:'Entrada — nueva compra (crea lote FIFO)' },
-  { v:'ajuste_pos', l:'Ajuste positivo' },
-  { v:'ajuste_neg', l:'Ajuste negativo / merma' }
-];
-
-// ── Iconos SVG ────────────────────────────────────────
-const SVG = {
-  cart:     `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/></svg>`,
-  package:  `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>`,
-  barchart: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>`,
-  banknote: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>`,
-  trending: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`,
-  camera:   `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>`,
-  trash:    `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>`,
-  x:        `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
-  check:    `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
-  receipt:  `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16l3-2 2 2 2-2 2 2 2-2 3 2V4a2 2 0 00-2-2z"/><line x1="16" y1="8" x2="8" y2="8"/><line x1="16" y1="12" x2="8" y2="12"/><line x1="11" y1="16" x2="8" y2="16"/></svg>`,
-  qr:       `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="5" y="5" width="3" height="3" fill="currentColor" stroke="none"/><rect x="16" y="5" width="3" height="3" fill="currentColor" stroke="none"/><rect x="5" y="16" width="3" height="3" fill="currentColor" stroke="none"/><rect x="14" y="14" width="3" height="3" fill="currentColor" stroke="none"/></svg>`,
-  clear:    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>`,
-  scan:     `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>`,
-  plus:     `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
-  empty:    `<svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/></svg>`,
-  print:    `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>`,
-  edit:     `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
-  tag:      `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg>`,
-  warn:     `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
-};
 
 // ── Estado global ─────────────────────────────────────
-let cart             = [];
-let editProdId       = null;
-let adjProdId        = null;
-let lastSaleId       = null;
-let payMethod        = 'efectivo';
-let ventaFechaManual = false;   // true cuando el usuario editó la fecha de venta a mano
-let invSort          = { col: 'name', dir: 1 };
-const collapsedCats  = new Set();
-
-// ═══════════════════════════════════════════════════════
-//  MOTOR DE PRECISIÓN FINANCIERA
-//  Todas las operaciones de dinero van en centavos (enteros).
-//  Solo se convierte a decimal al mostrar en pantalla.
-// ═══════════════════════════════════════════════════════
-
-// Convierte Bs a centavos (entero) — nunca punto flotante interno
-const toCents   = bs  => Math.round(Number(bs) * 100);
-// Convierte centavos a Bs para mostrar
-const fromCents = c   => c / 100;
-
-// Banker's Rounding (round-half-to-even) a 2 decimales
-// Usada para: ganancia por ítem, COGS en reportes
-function bankersRound(value) {
-  const cents = Math.round(value * 100); // trabajamos en centavos enteros
-  // El redondeo bancario solo importa en el medio punto exacto (.005)
-  // Math.round ya hace lo correcto para todos los demás casos
-  // Para el medio exacto, forzamos par:
-  const str   = value.toFixed(10);
-  const parts = str.split('.');
-  const dec   = parts[1] || '';
-  // Detectar si es exactamente x.xx5000...
-  if (dec[2] === '5' && !dec.slice(3).split('').some(d => d !== '0')) {
-    const base = Math.floor(value * 100);
-    return (base % 2 === 0 ? base : base + 1) / 100;
-  }
-  return cents / 100;
-}
-
-// Truncado a 2 decimales — para consumo FIFO (evita redondear hacia arriba el costo)
-const truncate2 = v => Math.floor(v * 100) / 100;
-
-// Calcula costo unitario con precisión máxima dado costoTotal y cantidad
-// Devuelve número con hasta 6 decimales para cálculos intermedios
-function calcCostoUnitario(costoTotalBs, cantidad) {
-  if (!cantidad || cantidad <= 0) return 0;
-  const totalCents = toCents(costoTotalBs);
-  // División entera + resto distribuido
-  const unitCents  = Math.floor(totalCents / cantidad);
-  const resto      = totalCents - unitCents * cantidad;
-  // El resto (céntimos extra) se registra en el lote como fracción real
-  // para que el COGS acumulado cuadre exactamente con el costo total pagado
-  return (unitCents + resto / cantidad) / 100;
-}
-
-// Llamada desde oninput en index.html — scope global garantizado
-function recalcCostoUnit() {
-  const total = parseFloat(document.getElementById('adjCostoTotal').value) || 0;
-  const qty   = parseInt(document.getElementById('adjCantidad').value)     || 0;
-  if (!total || total <= 0) { toast('Ingresa el costo total del lote primero', 'warn'); return; }
-  if (!qty   || qty   <= 0) { toast('Ingresa la cantidad de unidades primero', 'warn'); return; }
-  const unit = calcCostoUnitario(total, qty);
-  document.getElementById('adjCosto').value = unit.toFixed(6);
-  toast(`Bs ${total} ÷ ${qty} u = Bs ${unit.toFixed(4)}/u`, 'success');
-}
-
-// Suma de líneas con centavos — evita error acumulado al sumar ítems
-function sumLinesCents(items, fn) {
-  return items.reduce((s, item) => s + Math.round(fn(item) * 100), 0);
-}
-
-// ── Helpers de formato ────────────────────────────────
-const fmt     = n => `Bs ${bankersRound(Number(n)).toFixed(2)}`;
-const fmtN    = n => bankersRound(Number(n)).toFixed(2);
-const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('es-BO') : '—';
-
-// ── Vencimiento de lotes ──────────────────────────────
+let cart      = [];           // [{producto, variante, qty, customPrice}]  variante = {tamaño,sabor,code,multiplier,precio,costo}
+let payMethod = 'efectivo';
+let statGran  = 'dia';        // granularidad de estadísticas
+let ventaFechaManual = false;
 const EXPIRY_WARN_DAYS = 7;
 
-// Devuelve días hasta vencimiento (negativo = ya venció)
-function daysToExpiry(isoDate) {
-  if (!isoDate) return null;
-  const hoy  = new Date(); hoy.setHours(0,0,0,0);
-  const venc = new Date(isoDate); venc.setHours(0,0,0,0);
-  return Math.round((venc - hoy) / 86400000);
+// ── Helpers de dinero ─────────────────────────────────
+const toCents   = bs => Math.round(Number(bs) * 100);
+const fromCents = c  => c / 100;
+function bankersRound(v) {
+  const n = Number(v); if (!isFinite(n)) return 0;
+  // +(…).toFixed(6) absorbe el error binario (1.005*100 = 100.49999…)
+  const c = +(n * 100).toFixed(6), f = Math.floor(c), diff = c - f;
+  let r;
+  if (diff > 0.5) r = f + 1; else if (diff < 0.5) r = f;
+  else r = (f % 2 === 0) ? f : f + 1;
+  return r / 100;
+}
+const truncate2 = v => Math.floor(v * 100) / 100;
+const fmt   = n => `Bs ${bankersRound(Number(n)).toFixed(2)}`;
+const fmtN  = n => bankersRound(Number(n)).toFixed(2);
+function calcCostoUnitario(total, cant) {
+  if (!cant || cant <= 0) return 0;
+  return Math.round((total / cant) * 1e6) / 1e6;
 }
 
-// Devuelve el chip HTML de vencimiento con color según urgencia
-function expiryTag(isoDate) {
-  if (!isoDate) return '';
-  const days = daysToExpiry(isoDate);
-  const fecha = new Date(isoDate).toLocaleDateString('es-BO');
-  if (days < 0)
-    return `<span class="expiry-tag expiry-vencido">⚠ Vencido ${fecha}</span>`;
-  if (days === 0)
-    return `<span class="expiry-tag expiry-hoy">⚠ Vence HOY</span>`;
-  if (days <= EXPIRY_WARN_DAYS)
-    return `<span class="expiry-tag expiry-pronto">⏰ Vence en ${days}d · ${fecha}</span>`;
-  return `<span class="expiry-tag expiry-ok">✓ Vence ${fecha}</span>`;
-}
-
-// Revisa todos los lotes al iniciar y muestra alertas de vencimiento
-// Actualiza el badge rojo en el botón Inventario
-async function updateExpiryBadge() {
-  // Usar caché de Sheets si está disponible, si no IndexedDB
-  const lots = _invCache.lotes.length
-    ? _invCache.lotes
-    : await DB.getLots();
-  const count = lots.filter(l =>
-    l.expiry && (l.qty_remaining || 0) > 0 && daysToExpiry(l.expiry) <= EXPIRY_WARN_DAYS
-  ).length;
-  ['invExpBadge', 'invExpBadgeMobile'].forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    if (count > 0) {
-      el.textContent = count > 9 ? '9+' : count;
-      el.classList.remove('hidden');
-    } else {
-      el.classList.add('hidden');
-    }
-  });
-}
-
-async function checkExpiryAlerts() {
-  // Mostrar solo una vez por sesión (se resetea al cerrar la pestaña)
-  if (sessionStorage.getItem('expiry_alerted')) return;
-
-  const lots = await DB.getLots();
-  const alertas = lots
-    .filter(l => l.expiry && l.qty_remaining > 0)
-    .map(l => ({ lot: l, days: daysToExpiry(l.expiry) }))
-    .filter(x => x.days !== null && x.days <= EXPIRY_WARN_DAYS)
-    .sort((a, b) => a.days - b.days);
-
-  if (!alertas.length) return;
-
-  sessionStorage.setItem('expiry_alerted', '1');
-
-  if (alertas.length === 1) {
-    const { lot, days } = alertas[0];
-    const prod   = await DB.getProduct(lot.product_id);
-    const nombre = prod?.name || `Lote #${lot.id}`;
-    const msg    = days < 0  ? `🚨 VENCIDO: ${nombre} (${lot.qty_remaining} ud.)`
-                 : days === 0 ? `🚨 Vence HOY: ${nombre} (${lot.qty_remaining} ud.)`
-                              : `⏰ Vence en ${days}d: ${nombre} (${lot.qty_remaining} ud.)`;
-    toast(msg, days <= 0 ? 'error' : 'warn');
-  } else {
-    // Varios lotes — mostrar un único resumen
-    const vencidos = alertas.filter(x => x.days <= 0).length;
-    const proximos = alertas.length - vencidos;
-    const partes   = [];
-    if (vencidos) partes.push(`${vencidos} vencido${vencidos>1?'s':''}`);
-    if (proximos) partes.push(`${proximos} por vencer`);
-    toast(`⏰ ${partes.join(' · ')} — revisa Inventario`, vencidos ? 'error' : 'warn');
+// ── Desglose de pago efectivo / QR (incluye mixto) ────
+// Usa monto_efectivo / monto_qr si vienen; si no (ventas viejas),
+// los deriva del método para no perder compatibilidad.
+function desglosePago(v) {
+  const hasBreakdown = (v.monto_efectivo != null && v.monto_efectivo !== '') ||
+                       (v.monto_qr != null && v.monto_qr !== '');
+  if (hasBreakdown) {
+    return { efectivo: Number(v.monto_efectivo) || 0, qr: Number(v.monto_qr) || 0 };
   }
+  if (v.metodo === 'qr')    return { efectivo: 0, qr: v.total || 0 };
+  return { efectivo: v.total || 0, qr: 0 };  // efectivo por defecto
 }
 
-// ── Tooltip de ayuda ──────────────────────────────────
-let _helpTip = null;
-function helpTip(btn, msg) {
-  if (_helpTip) { _helpTip.remove(); _helpTip = null; }
-  const tip = document.createElement('div');
-  tip.className = 'help-tooltip';
-  tip.textContent = msg;
-  document.body.appendChild(tip);
-  _helpTip = tip;
-  const r = btn.getBoundingClientRect();
-  let top  = r.bottom + 6;
-  let left = r.left;
-  if (left + 248 > window.innerWidth)  left = window.innerWidth  - 252;
-  if (top  + 100 > window.innerHeight) top  = r.top - tip.offsetHeight - 6;
-  tip.style.top  = top  + 'px';
-  tip.style.left = left + 'px';
-  setTimeout(() => {
-    document.addEventListener('pointerdown', function cl(e) {
-      if (!e.target.closest('.help-btn')) { tip.remove(); _helpTip = null; document.removeEventListener('pointerdown', cl); }
-    });
-  }, 10);
+// ── Fechas ────────────────────────────────────────────
+// yyyy-MM-dd en hora LOCAL (toISOString() es UTC: en Bolivia, UTC−4,
+// una venta de las 20:00+ caería en el día siguiente).
+function fechaLocalISO(d = new Date()) {
+  d = new Date(d);
+  if (isNaN(d)) return '';
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
+}
+const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('es-BO') : '—';
+function daysToExpiry(iso) {
+  if (!iso) return null;
+  const d = new Date(iso); if (isNaN(d)) return null;
+  return Math.ceil((d - new Date()) / 86400000);
+}
+// Lotes con stock que están vencidos o por vencer (≤ EXPIRY_WARN_DAYS).
+// Devuelve [{lote, prod, dias}] ordenado por días (los más urgentes primero).
+function lotesPorVencer() {
+  const out = [];
+  for (const l of Store.lotes) {
+    if ((l.qty_restante || 0) <= 0) continue;       // sin stock, no importa
+    if (!l.vencimiento) continue;                    // sin fecha, no se controla
+    const dias = daysToExpiry(l.vencimiento);
+    if (dias == null || dias > EXPIRY_WARN_DAYS) continue;
+    out.push({ lote: l, prod: Store.getProducto(l.producto_id), dias });
+  }
+  return out.sort((a, b) => a.dias - b.dias);
+}
+// Texto legible de "en cuántos días" / "vencido"
+function textoVence(dias) {
+  if (dias < 0)  return `vencido hace ${-dias}d`;
+  if (dias === 0) return 'vence HOY';
+  if (dias === 1) return 'vence mañana';
+  return `vence en ${dias}d`;
+}
+function startOfWeek(d){ const x=new Date(d); const day=(x.getDay()+6)%7; x.setHours(0,0,0,0); x.setDate(x.getDate()-day); return x; }
+function isoWeekKey(d){
+  const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = (x.getUTCDay()+6)%7; x.setUTCDate(x.getUTCDate()-day+3);
+  const firstThu = new Date(Date.UTC(x.getUTCFullYear(),0,4));
+  const week = 1 + Math.round(((x - firstThu)/86400000 - 3 + ((firstThu.getUTCDay()+6)%7))/7);
+  return `${x.getUTCFullYear()}-W${String(week).padStart(2,'0')}`;
+}
+function monthKey(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+function bucketKey(date, gran){
+  const d = new Date(date);
+  if (gran === 'mes')    return monthKey(d);
+  if (gran === 'semana') return isoWeekKey(d);
+  return fechaLocalISO(d); // dia: yyyy-MM-dd local
 }
 
-function generarLoteId() {
-  const ts  = Date.now().toString(36).toUpperCase();
-  const rnd = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `LOT-${ts}-${rnd}`;
+// ── UI helpers ────────────────────────────────────────
+function $(id) { return document.getElementById(id); }
+// Escapa texto del usuario antes de meterlo en innerHTML / atributos
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+function openModal(id)  { $(id).classList.add('open'); }
+function closeModal(id) { $(id).classList.remove('open'); }
+function showOverlay(msg='Procesando…') { $('processMsg').textContent = msg; $('processOverlay').classList.add('on'); }
+function hideOverlay() { $('processOverlay').classList.remove('on'); }
+let _toastTid = null;
+function toast(msg, type='') {
+  const t = $('toast'); t.textContent = msg; t.className = 'toast on ' + type;
+  clearTimeout(_toastTid); _toastTid = setTimeout(() => t.className = 'toast', 2600);
 }
-
-function reloadKeepTab() {
-  const active = document.querySelector('.nav-btn.active, .bottom-nav-btn.active');
-  if (active?.dataset?.view) sessionStorage.setItem('pos_tab', active.dataset.view);
-  location.reload();
+// Confirmación reutilizable. Devuelve una Promise<boolean>.
+//   await confirmar({ titulo, mensaje, ok, peligro })
+let _confResolver = null;
+function confirmar({ titulo = 'Confirmar', mensaje = '', ok = 'Confirmar', peligro = false } = {}) {
+  $('confTitulo').textContent = titulo;
+  $('confMensaje').textContent = mensaje;
+  const btnSi = $('confSi');
+  btnSi.textContent = ok;
+  btnSi.className = 'btn ' + (peligro ? 'btn-peligro' : 'btn-primary');
+  openModal('modalConfirm');
+  setTimeout(() => btnSi.focus(), 50);
+  return new Promise(res => { _confResolver = res; });
 }
-
-function showOverlay(msg = 'Procesando…') {
-  const ov = document.getElementById('processOverlay');
-  const pm = document.getElementById('processMsg');
-  if (pm) pm.textContent = msg;
-  if (ov) ov.classList.add('active');
+function _confCerrar(valor) {
+  closeModal('modalConfirm');
+  if (_confResolver) { _confResolver(valor); _confResolver = null; }
 }
-function hideOverlay() {
-  const ov = document.getElementById('processOverlay');
-  if (ov) ov.classList.remove('active');
-}
-
-function toast(msg, type = '') {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.className = `toast show ${type}`;
-  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 3200);
-}
-function openModal(id)  { document.getElementById(id).classList.add('open'); }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 function setStatus(state, msg) {
-  const el = document.getElementById('sheetsStatus');
-  el.className = `sheets-status ${state}`;
-  // Mostrar mensaje con hora de última sync exitosa
-  if (state === 'ok') {
-    const now = new Date();
-    const time = now.toLocaleTimeString('es-BO', {hour:'2-digit', minute:'2-digit'});
-    el.textContent = `${msg} · ${time}`;
-    el.title = `Última sincronización: ${now.toLocaleString('es-BO')}`;
-  } else {
-    el.textContent = msg;
-    el.title = '';
-  }
+  const el = $('sheetsStatus'); el.textContent = msg; el.className = 'sheets-status ' + state;
 }
-
-function populateCatSelect(sel, selected) {
-  sel.innerHTML = CAT_ORDER.map(c =>
-    `<option value="${c}"${c === selected ? ' selected':''}>${CAT_NAMES[c]}</option>`
-  ).join('');
-}
-
-// ── Reloj ─────────────────────────────────────────────
 function tickClock() {
-  const el = document.getElementById('clock');
-  if (el) {
-    const now = new Date();
-    // Mostrar hora con segundos en tiempo real
-    el.textContent = now.toLocaleTimeString('es-BO', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-    el.title = now.toLocaleDateString('es-BO', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
-  }
+  const el = $('clock'); if (!el) return;
+  el.textContent = new Date().toLocaleTimeString('es-BO', { hour:'2-digit', minute:'2-digit' });
 }
 
 // ═══════════════════════════════════════════════════════
-//  NAVEGACIÓN
+//  NAVEGACIÓN + PERMISOS (§8-bis)
 // ═══════════════════════════════════════════════════════
+function vistaActual() {
+  const v = document.querySelector('.view.active');
+  return v ? v.id.replace('view-', '') : 'pos';
+}
+function permisosActuales() {
+  const rol = localStorage.getItem('pos_rol') || 'empleado';
+  return (typeof PERMISOS !== 'undefined' && PERMISOS[rol]) || ['pos','productos'];
+}
+function irAVista(view) {
+  if (!permisosActuales().includes(view)) return;
+  document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.id === 'view-' + view));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  if (view === 'productos')    renderProducts();
+  if (view === 'categorias')   renderCategorias();
+  if (view === 'inventario')   renderInventory();
+  if (view === 'ventas')       renderSales($('ventasFecha').value);
+  if (view === 'estadisticas') aplicarStats();
+}
+function aplicarPermisos() {
+  const permitidas = permisosActuales();
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.style.display = permitidas.includes(btn.dataset.view) ? '' : 'none';
+  });
+  if (!permitidas.includes(vistaActual())) irAVista('pos');
+}
 function initNav() {
-  function navigate(v) {
-    document.querySelectorAll('.nav-btn, .bottom-nav-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.view === v);
-    });
-    document.querySelectorAll('.view').forEach(x => x.classList.remove('active'));
-    document.getElementById(`view-${v}`)?.classList.add('active');
-    if (v === 'productos')  renderProducts();
-    if (v === 'inventario') syncInventario();
-    if (v === 'ventas')     renderSales();
-    if (v === 'reportes')   renderReports();
-    if (v === 'pos') setTimeout(() => document.getElementById('scanInput')?.focus(), 50);
-    // Cerrar carrito al cambiar de vista en móvil
-    toggleMobileCart(false);
-  }
-  document.querySelectorAll('.nav-btn, .bottom-nav-btn').forEach(btn => {
-    btn.addEventListener('click', () => navigate(btn.dataset.view));
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => irAVista(btn.dataset.view));
   });
 }
 
 // ═══════════════════════════════════════════════════════
-//  POS — CARRITO
+//  CARRITO
 // ═══════════════════════════════════════════════════════
-// Suma en centavos para evitar errores de punto flotante al acumular líneas
-function cartTotal() { return sumLinesCents(cart, i => i.lineTotal) / 100; }
-function cartUnits() { return cart.reduce((s, i) => s + i.qty * i.barcode.multiplier, 0); }
-function unitPrice(item) { return item.customPrice ?? item.product.price; }
+// item.variante = { tamaño, sabor, code, multiplier, precio, costo } resuelto por Store.variantInfo
+function unitPrice(item) { return item.customPrice ?? item.variante.precio; }
+function lineUnits(item) { return item.qty * (item.variante?.multiplier || 1); }
+function lineTotal(item) { return truncate2(unitPrice(item) * lineUnits(item)); }
+function cartTotal()    { return cart.reduce((s,i)=> s + lineTotal(i), 0); }
 
-function calcLineTotal(qty, price) {
-  // Multiplicar en centavos y convertir — evita error de punto flotante por ítem
-  return Math.round(toCents(price) * qty) / 100;
-}
-
-function addToCart(product, barcode) {
-  // Deduplicar por nombre + código de barras (compatible con caché sin id local)
-  const key = `${product.name}|${barcode.code}`;
-  const ex  = cart.find(i => `${i.product.name}|${i.barcode.code}` === key);
-  if (ex) { ex.qty++; ex.lineTotal = calcLineTotal(ex.qty, unitPrice(ex)); }
-  else     cart.push({ product, barcode, qty: 1, lineTotal: product.price });
+function addToCart(producto, tamaño, sabor) {
+  const v = Store.variantInfo(producto, tamaño, sabor);
+  const ex = cart.find(i => i.producto.id === producto.id && i.variante.tamaño === v.tamaño && i.variante.sabor === v.sabor);
+  if (ex) ex.qty++;
+  else cart.push({ producto, variante: v, qty: 1, customPrice: null });
   renderCart();
 }
-
-function removeFromCart(idx) { cart.splice(idx, 1); renderCart(); }
-
 function setQty(idx, val) {
-  const q = Math.floor(parseFloat(val));
-  if (isNaN(q) || q <= 0) return;
-  cart[idx].qty       = q;
-  cart[idx].lineTotal = calcLineTotal(q, unitPrice(cart[idx]));
-  // Actualizar solo los totales derivados sin perder el foco del input
-  const itemEl = document.querySelector(`.cart-item[data-idx="${idx}"]`);
-  if (itemEl) {
-    const item  = cart[idx];
-    const price = unitPrice(item);
-    const cost  = item.product.cost || 0;
-    const units = q * item.barcode.multiplier;
-    const gan   = (price - cost) * units;
-    const pct   = price > 0 ? (gan / (price * units) * 100).toFixed(1) : '0.0';
-    const el = itemEl.querySelector('.ci-total');
-    const gEl = itemEl.querySelector('.ci-profit-row');
-    if (el)  el.textContent = fmt(item.lineTotal);
-    if (gEl) {
-      gEl.innerHTML = `<button class="help-btn" onclick="helpTip(this,'Ganancia estimada de este ítem: precio de venta menos costo de adquisición, multiplicado por las unidades. El % es el margen sobre el precio.')">?</button> Ganancia  Bs ${gan.toFixed(2)}  ·  ${pct}%  ·  ${units} ${item.product.base_unit}`;
-      gEl.style.color = gan >= 0 ? 'var(--green)' : 'var(--red)';
-    }
-  }
-  const total = cartTotal();
-  document.getElementById('cartCount').textContent   = `${cart.length} ítem(s)`;
-  document.getElementById('posTotal').textContent    = fmt(total);
-  document.getElementById('posSubtotal').textContent = fmt(total);
-  updateChange();
+  const q = Math.max(1, parseInt(val) || 1);
+  cart[idx].qty = q; renderCart();
 }
+function removeFromCart(idx) { cart.splice(idx,1); renderCart(); }
 
-// ── Toggle carrito en móvil ───────────────────────────
-function toggleMobileCart(open) {
-  const panel    = document.querySelector('.pos-right');
-  const backdrop = document.getElementById('cartBackdrop');
-  if (!panel) return;
-  if (open) {
-    panel.classList.add('cart-visible');
-    backdrop?.classList.add('show');
-  } else {
-    panel.classList.remove('cart-visible');
-    backdrop?.classList.remove('show');
-  }
+// ── Precio especial por ítem (editable en caja) ───────
+// Costo de adquisición por unidad de la variante:
+//   - el promedio ponderado de los lotes activos (lo realmente pagado), si hay
+//   - si no, el costo configurado de la variante
+function costoUnidadVariante(it) {
+  const avg = Store.variantAvgCost(it.producto.id, it.variante.tamaño, it.variante.sabor);
+  return avg > 0 ? avg : (it.variante.costo || 0);
+}
+let _discCostoU = 0;
+function openDiscount(idx) {
+  const it = cart[idx]; if (!it) return;
+  const variante = [it.variante.tamaño, it.variante.sabor].filter(Boolean).join(' · ');
+  _discCostoU = costoUnidadVariante(it);
+  $('discIdx').value = idx;
+  $('discProdName').textContent = `${it.producto.nombre}${variante?` (${variante})`:''}`;
+  $('discPrecioOrig').textContent = fmt(it.variante.precio);
+  $('discCosto').textContent = _discCostoU > 0 ? fmt(_discCostoU) : '—';
+  $('discInput').value = unitPrice(it);
+  _discUpdateMargen();
+  openModal('modalDiscount');
+  setTimeout(() => { $('discInput').focus(); $('discInput').select(); }, 50);
+}
+// Muestra ganancia y margen con el precio tecleado, comparando contra el costo /u
+function _discUpdateMargen() {
+  const el = $('discMargen');
+  const precio = parseFloat($('discInput').value);
+  if (isNaN(precio)) { el.textContent = '—'; el.className = 'disc-margen'; return; }
+  const gan = precio - _discCostoU;
+  const margen = precio > 0 ? (gan / precio) * 100 : 0;
+  let cls = 'g', txt = `Ganancia/u: ${fmt(gan)} · Margen: ${margen.toFixed(0)}%`;
+  if (gan < 0)        { cls = 'r'; txt = `⚠ PIERDES ${fmt(-gan)}/u (por debajo del costo)`; }
+  else if (margen < 15) cls = 'a';
+  el.textContent = txt;
+  el.className = 'disc-margen m-' + cls;
+}
+function aplicarDiscount() {
+  const idx = parseInt($('discIdx').value);
+  const it = cart[idx]; if (!it) return;
+  const nuevo = parseFloat($('discInput').value);
+  if (isNaN(nuevo) || nuevo < 0) { toast('Precio inválido', 'error'); return; }
+  // Si coincide con el precio base, se considera "sin especial"
+  it.customPrice = (Math.abs(nuevo - it.variante.precio) < 0.005) ? null : nuevo;
+  closeModal('modalDiscount'); renderCart();
+}
+function quitarDiscount() {
+  const idx = parseInt($('discIdx').value);
+  if (cart[idx]) cart[idx].customPrice = null;
+  closeModal('modalDiscount'); renderCart();
 }
 
 function renderCart() {
-  const list = document.getElementById('cartList');
+  const box = $('cartList');
   if (!cart.length) {
-    list.innerHTML = `<div class="cart-empty">
-      <div style="color:var(--border)">${SVG.empty}</div>
-      <p style="color:var(--text3);margin-top:14px;font-size:.9rem">Carrito vacío</p>
-    </div>`;
+    box.innerHTML = `<div class="cart-empty">Carrito vacío</div>`;
   } else {
-    list.innerHTML = cart.map((item, idx) => {
-      const price  = unitPrice(item);
-      const cost   = item.product.cost || 0;
-      const units  = item.qty * item.barcode.multiplier;
-      // Ganancia: suma en centavos por unidad, Banker's Round al mostrar
-      const ganCents = Math.round(toCents(price) * units) - Math.round(toCents(cost) * units);
-      const gan      = bankersRound(ganCents / 100);
-      const pct      = price > 0 ? (gan / (price * units) * 100).toFixed(1) : '0.0';
-      const ganCol = gan >= 0 ? 'var(--green)' : 'var(--red)';
-      const isPack  = item.barcode.multiplier > 1;
-      const hasDsc  = item.customPrice !== undefined && item.customPrice < item.product.price;
-      const stock   = item.product.stock || 0;
-      const restante = stock - units;           // lo que queda después de esta venta
-      const stockCol = restante < 0 ? 'var(--red)' : restante === 0 ? 'var(--amber)' : 'var(--text2)';
-      const stockLbl = restante < 0
-        ? `⚠ Solo hay ${stock}`
-        : restante === 0
-          ? `Último${stock > 1 ? 's' : ''} ${stock}`
-          : `${stock}`;
-
-      return `<div class="cart-item" data-idx="${idx}">
-        <div class="ci-body">
-          <div class="ci-name-row">
-            <span class="ci-name">${item.product.name}</span>
-            ${isPack ? `<span class="ci-badge ci-badge-pack">${SVG.package} ×${item.barcode.multiplier}</span>` : ''}
-            ${hasDsc  ? `<span class="ci-badge ci-badge-disc">${SVG.tag} Precio especial</span>` : ''}
-            <span style="margin-left:auto;font-size:.72rem;color:${stockCol};font-family:var(--mono)">
-              Stock: ${stockLbl} ${item.product.base_unit}
-            </span>
-          </div>
-          <div class="ci-calc-row">
-            <span class="ci-price-wrap" onclick="openDiscountModal(${idx})" title="Clic para precio especial">
-              ${hasDsc ? `<s class="ci-orig">${fmt(item.product.price)}</s>` : ''}
-              <span class="ci-price-val">${fmt(price)}</span>
-            </span>
-            <span class="ci-sep">×</span>
-            <input class="ci-qty-input" type="number" min="1" step="1" value="${item.qty}"
-                   onchange="setQty(${idx}, +this.value)" onclick="this.select()">
-            <span class="ci-sep">=</span>
-            <span class="ci-total">${fmt(item.lineTotal)}</span>
-          </div>
-          <div class="ci-profit-row" style="color:${ganCol}">
-            <button class="help-btn" onclick="helpTip(this,'Ganancia estimada de este ítem: precio de venta menos costo de adquisición, multiplicado por las unidades. El % es el margen sobre el precio.')">?</button>
-            Ganancia  Bs ${gan.toFixed(2)}  ·  ${pct}%  ·  ${units} ${item.product.base_unit}
+    box.innerHTML = cart.map((it, i) => {
+      const variante = esc([it.variante.tamaño, it.variante.sabor].filter(Boolean).join(' · '));
+      const mult = it.variante.multiplier > 1 ? `×${it.variante.multiplier} · ` : '';
+      // Stock disponible de la variante vs. unidades pedidas en esta línea
+      const stock = Store.variantStock(it.producto.id, it.variante.tamaño, it.variante.sabor);
+      const pedidas = lineUnits(it);
+      const stockCls = stock <= 0 ? 'r' : (pedidas > stock ? 'a' : 'g');
+      const stockBadge = `<span class="ci-stock m-${stockCls}" title="Stock disponible de esta variante">stock ${stock}</span>`;
+      return `<div class="cart-item">
+        <div class="ci-main">
+          <div class="ci-name">${esc(it.producto.nombre)}${variante ? ` <span class="ci-var">${variante}</span>` : ''} ${stockBadge}</div>
+          <div class="ci-sub ci-price" onclick="openDiscount(${i})" title="Tocar para cambiar el precio">
+            ${mult}${fmt(unitPrice(it))} ${it.customPrice!=null?'<span class="ci-disc">★ especial</span>':'<span class="ci-edit">✎</span>'}
           </div>
         </div>
-        <button class="ci-del" data-idx="${idx}" title="Mantén 3 segundos para eliminar">
-          <div class="ci-del-fill"></div>
-          <span class="ci-del-icon">${SVG.trash}</span>
-        </button>
+        <input class="ci-qty" type="number" min="1" value="${it.qty}" onchange="setQty(${i}, this.value)">
+        <div class="ci-total">${fmt(lineTotal(it))}</div>
+        <button class="ci-del" onclick="removeFromCart(${i})">✕</button>
       </div>`;
     }).join('');
   }
-
-  const total = cartTotal();
-  document.getElementById('cartCount').textContent   = `${cart.length} ítem(s)`;
-  document.getElementById('posTotal').textContent    = fmt(total);
-  document.getElementById('posSubtotal').textContent = fmt(total);
+  const totalUnits = cart.reduce((s, i) => s + lineUnits(i), 0);
+  $('cartCount').textContent = `${cart.length} ítems · ${totalUnits} u`;
+  $('posTotal').textContent  = fmt(cartTotal());
   updateChange();
-  // Badge FAB en móvil
-  const badge = document.getElementById('cartFabBadge');
-  if (badge) { badge.textContent = cart.length; badge.classList.toggle('hidden', !cart.length); }
 }
 
-// ── Hold-to-delete en ítems del carrito ───────────────
-function initCartDeleteHold() {
-  const list = document.getElementById('cartList');
-  let timer = null, raf = null, start = null, activeBtn = null;
-  const HOLD = 1000;
-
-  function cancel() {
-    clearTimeout(timer); cancelAnimationFrame(raf);
-    timer = raf = start = null;
-    if (activeBtn) {
-      activeBtn.classList.remove('holding');
-      activeBtn.querySelector('.ci-del-fill').style.setProperty('--p', '0');
-      activeBtn = null;
-    }
-  }
-  function tick() {
-    if (!start || !activeBtn) return;
-    const p = Math.min((Date.now() - start) / HOLD, 1);
-    activeBtn.querySelector('.ci-del-fill').style.setProperty('--p', p);
-    if (p < 1) raf = requestAnimationFrame(tick);
-  }
-
-  list.addEventListener('pointerdown', e => {
-    const btn = e.target.closest('.ci-del');
-    if (!btn) return;
-    e.preventDefault();
-    activeBtn = btn;
-    start = Date.now();
-    btn.classList.add('holding');
-    toast('Mantén presionado para eliminar', 'warn');
-    raf = requestAnimationFrame(tick);
-    timer = setTimeout(() => {
-      const idx = parseInt(btn.dataset.idx);
-      cancel();
-      removeFromCart(idx);
-    }, HOLD);
-  });
-  list.addEventListener('pointerup',     cancel);
-  list.addEventListener('pointercancel', cancel);
-  list.addEventListener('contextmenu',   e => { if (e.target.closest('.ci-del')) e.preventDefault(); });
-}
-
-// ── Descuento por ítem ─────────────────────────────────
-function openDiscountModal(idx) {
-  const item = cart[idx];
-  document.getElementById('discProdName').textContent   = item.product.name;
-  document.getElementById('discPrecioOrig').textContent = fmt(unitPrice(item));
-  document.getElementById('discInput').value = '';
-  openModal('modalDiscount');
-  document.getElementById('discInput').focus();
-
-  const btnOk = document.getElementById('btnDiscOk');
-  const n = btnOk.cloneNode(true); btnOk.replaceWith(n);
-  n.addEventListener('click', () => {
-    const v = parseFloat(document.getElementById('discInput').value);
-    if (!isNaN(v) && v >= 0) {
-      cart[idx].customPrice = v;
-      cart[idx].lineTotal   = cart[idx].qty * v;
-    }
-    closeModal('modalDiscount'); renderCart();
-  });
-  document.getElementById('btnDiscCancel').onclick = () => closeModal('modalDiscount');
-}
-
-// ── Cambio ─────────────────────────────────────────────
 function updateChange() {
-  const rec    = parseFloat(document.getElementById('cashReceived').value) || 0;
-  const total  = cartTotal();
-  const change = rec - total;
-  const el     = document.getElementById('posChange');
-  el.textContent = change >= 0 ? fmt(change) : 'Bs —';
-  el.style.color = change >= 0 ? 'var(--green)' : 'var(--red)';
+  const rec = parseFloat($('cashReceived').value) || 0;
+  const ch  = rec - cartTotal();
+  $('posChange').textContent = (payMethod === 'efectivo' && rec > 0) ? fmt(ch) : 'Bs —';
 }
 
-// ── Scan / Búsqueda ────────────────────────────────────
+// Pago mixto: muestra cuánto falta (negativo) o sobra (positivo) respecto al total
+function updateMixDiff() {
+  const ef = parseFloat($('mixEfectivo').value) || 0;
+  const qr = parseFloat($('mixQr').value) || 0;
+  const diff = (ef + qr) - cartTotal();
+  const el = $('mixDiff');
+  el.textContent = fmt(diff);
+  el.style.color = Math.abs(diff) < 0.005 ? 'var(--green)' : (diff < 0 ? 'var(--red)' : 'var(--amber)');
+}
+
+// ═══════════════════════════════════════════════════════
+//  SCAN / BÚSQUEDA
+// ═══════════════════════════════════════════════════════
+// Añade la variante al carrito si el texto coincide EXACTO con un código.
+// Devuelve true si lo hizo. Centraliza scanner físico, cámara y tecleo.
+function intentarPorCodigo(code) {
+  code = (code || '').trim();
+  if (!code) return false;
+  const hit = Store.buscarPorBarcode(code);
+  if (hit) {
+    addToCart(hit.producto, hit.variante.tamaño, hit.variante.sabor);
+    toast(`+ ${hit.producto.nombre} ${[hit.variante.tamaño,hit.variante.sabor].filter(Boolean).join(' ')}`.trim(), 'success');
+    return true;
+  }
+  return false;
+}
 function initScan() {
-  const input = document.getElementById('scanInput');
-  const suggs = document.getElementById('suggestions');
-  let timer   = null;
-
-  // Tiempo mínimo entre chars para detectar escáner láser (≤30ms entre teclas)
-  let lastKeyTime = 0;
-
-  async function processScan(val) {
-    val = val.trim();
-    if (!val) return;
-    // Buscar en _invCache primero (Sheets), fallback a IndexedDB
-    const found = findBarcodeInCache(val) || await DB.findByBarcode(val);
-    if (found) {
-      addToCart(found.product, found.barcode);
-      toast(`${found.product.name} agregado`, 'success');
-      input.value = ''; suggs.innerHTML = '';
-      setTimeout(() => input.focus(), 80);
-      return;
-    }
-    // Buscar por nombre
-    const results = searchProductsInCache(val);
-    renderSuggestions(results.length ? results : await DB.searchProducts(val));
-  }
-
-  input.addEventListener('input', () => {
-    clearTimeout(timer);
-    const v = input.value.trim();
-    if (!v) { suggs.innerHTML = ''; return; }
-    // Escáner láser: chars rápidos + longitud ≥8 → procesar sin esperar
-    const now = Date.now();
-    const isScanner = (now - lastKeyTime) < 50 && v.length >= 8;
-    lastKeyTime = now;
-    timer = setTimeout(() => processScan(input.value), isScanner ? 100 : 600);
-  });
+  const input = $('scanInput'), sug = $('suggestions');
+  // Enter: intenta código; si no, deja las sugerencias por nombre
   input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { clearTimeout(timer); processScan(input.value); }
-    if (e.key === 'Escape') { input.value = ''; suggs.innerHTML = ''; }
-    lastKeyTime = Date.now();
+    if (e.key !== 'Enter') return;
+    const code = input.value.trim(); if (!code) return;
+    if (intentarPorCodigo(code)) { input.value=''; sug.innerHTML=''; }
+    else renderSuggestions(Store.buscarProductos(code));
   });
-  document.getElementById('btnScanClear').addEventListener('click', () => {
-    input.value = ''; suggs.innerHTML = ''; input.focus();
+  // En vivo: si lo tecleado/pegado ya coincide con un código exacto,
+  // se añade solo (sin pulsar Enter). Si no, muestra sugerencias por nombre.
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    if (q && intentarPorCodigo(q)) { input.value=''; sug.innerHTML=''; return; }
+    renderSuggestions(q ? Store.buscarProductos(q) : []);
   });
-  document.addEventListener('click', e => {
-    if (!e.target.closest('#scanArea')) suggs.innerHTML = '';
-  });
+  $('btnScanClear').addEventListener('click', () => { input.value=''; sug.innerHTML=''; input.focus(); });
+  $('btnCamera').addEventListener('click', openScanner);
+  document.addEventListener('click', e => { if (!$('scanArea').contains(e.target)) sug.innerHTML=''; });
+}
+function renderSuggestions(prods) {
+  const sug = $('suggestions');
+  if (!prods.length) { sug.innerHTML=''; return; }
+  sug.innerHTML = prods.map(p =>
+    `<div class="sug-item" onclick='abrirVariantePorId("${esc(p.id)}")'>
+      <span>${esc(p.nombre)}</span>
+      <span class="sug-cat">${esc(Store.categoriaNombre(p.categoria_id))}</span>
+      <span class="sug-price">${fmt(p.precio)}</span>
+    </div>`).join('');
 }
 
-function renderSuggestions(products) {
-  const suggs = document.getElementById('suggestions');
-  if (!products.length) { suggs.innerHTML = ''; return; }
-  suggs.innerHTML = products.map(p => {
-    const cls = p.stock <= 0 ? 'out' : p.stock <= p.min_stock ? 'low' : 'ok';
-    const lbl = p.stock <= 0 ? 'Sin stock' : `${p.stock} ${p.base_unit}(s)`;
-    return `<div class="sug-item" data-id="${p.id}">
-      <div>
-        <div class="sug-name">${p.name}</div>
-        <div class="sug-meta">${CAT_NAMES[p.category] || p.category} · <span style="color:var(--${cls === 'ok' ? 'text3' : cls === 'low' ? 'amber' : 'red'})">${lbl}</span></div>
-      </div>
-      <span class="sug-price">${fmt(p.price)}</span>
-    </div>`;
-  }).join('');
-  suggs.querySelectorAll('.sug-item').forEach(el => {
-    el.addEventListener('click', () => {
-      const p  = products.find(x => x.id === parseInt(el.dataset.id));
-      if (!p) return;
-      const bc = (p.barcodes || [])[0] || { code: '', multiplier: 1, label: 'Individual' };
-      addToCart(p, bc);
-      const si = document.getElementById('scanInput');
-      si.value = ''; suggs.innerHTML = '';
-      setTimeout(() => si.focus(), 80);
-      toast(`${p.name} agregado`, 'success');
-    });
-  });
-}
-
-// ── Scanner cámara ─────────────────────────────────────
-let scannerStream = null;
-let scannerActive = false;
-
+// ── Escáner por cámara (BarcodeDetector + getUserMedia) ──
+let _scanStream = null, _scanLoop = null, _scanBusy = false;
 async function openScanner() {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    toast('Cámara no disponible en este navegador', 'error'); return;
+  const video = $('scannerVideo'), status = $('scannerStatus');
+  if (!('BarcodeDetector' in window)) {
+    // Sin soporte nativo: avisar y usar el lector físico / tecleo
+    toast('Tu navegador no soporta escáner por cámara. Usa un lector USB o teclea el código.', 'error');
+    return;
   }
+  if (!navigator.mediaDevices?.getUserMedia) { toast('Cámara no disponible', 'error'); return; }
   openModal('modalScanner');
-  const video  = document.getElementById('scannerVideo');
-  const status = document.getElementById('scannerStatus');
-
+  status.textContent = 'Iniciando cámara…';
   try {
-    scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    video.srcObject = scannerStream;
-    scannerActive = true;
-
-    if ('BarcodeDetector' in window) {
-      status.textContent = 'Apunta al código de barras…';
-      const detector = new BarcodeDetector({ formats: ['ean_13','ean_8','code_128','code_39','qr_code','upc_a','upc_e'] });
-      const loop = async () => {
-        if (!scannerActive) return;
-        try {
-          const codes = await detector.detect(video);
-          if (codes.length) {
-            const code = codes[0].rawValue;
-            closeScanner();
-            const found = await DB.findByBarcode(code);
-            if (found) {
-              addToCart(found.product, found.barcode);
-              toast(`${found.product.name} agregado`, 'success');
+    _scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = _scanStream;
+    await video.play();
+    const detector = new BarcodeDetector({
+      formats: ['ean_13','ean_8','code_128','code_39','upc_a','upc_e','qr_code','itf']
+    });
+    status.textContent = 'Apunta al código de barras…';
+    _scanLoop = setInterval(async () => {
+      if (_scanBusy || video.readyState < 2) return;
+      _scanBusy = true;
+      try {
+        const codes = await detector.detect(video);
+        if (codes && codes.length) {
+          const code = (codes[0].rawValue || '').trim();
+          if (code) {
+            if (intentarPorCodigo(code)) {
+              status.textContent = `✓ ${code} — añadido`;
+              if (navigator.vibrate) navigator.vibrate(80);
+              await new Promise(r => setTimeout(r, 700)); // pausa para no duplicar
             } else {
-              // Rellenar el input con el código para búsqueda manual
-              document.getElementById('scanInput').value = code;
-              toast(`Código ${code} — producto no encontrado. Verifica.`, 'warn');
+              status.textContent = `Código ${code} no encontrado en el catálogo`;
             }
-            return;
           }
-        } catch (_) {}
-        requestAnimationFrame(loop);
-      };
-      requestAnimationFrame(loop);
-    } else {
-      status.textContent = 'BarcodeDetector no soportado. Ingresa el código manualmente.';
-    }
-  } catch (err) {
-    status.textContent = `Error de cámara: ${err.message}`;
+        }
+      } catch (_) {}
+      _scanBusy = false;
+    }, 350);
+  } catch (e) {
+    status.textContent = 'No se pudo acceder a la cámara: ' + e.message;
+    toast('No se pudo acceder a la cámara (¿permiso denegado?)', 'error');
   }
 }
-
 function closeScanner() {
-  scannerActive = false;
-  if (scannerStream) { scannerStream.getTracks().forEach(t => t.stop()); scannerStream = null; }
-  closeModal('modalScanner');
+  if (_scanLoop) { clearInterval(_scanLoop); _scanLoop = null; }
+  if (_scanStream) { _scanStream.getTracks().forEach(t => t.stop()); _scanStream = null; }
+  _scanBusy = false;
+  $('scannerVideo').srcObject = null;
 }
 
-// ── Pago ───────────────────────────────────────────────
+// ── Modal de variante (elegir tamaño/sabor al buscar por nombre) ──
+// El selector "barcode" ya no se usa: cada tamaño+sabor ES una variante
+// con su propio código. Se elige tamaño → sabor y eso resuelve todo.
+let _mvProducto = null;
+function abrirVariantePorId(id) { const p = Store.getProducto(id); if (p) abrirVariante(p); }
+function abrirVariante(producto) {
+  _mvProducto = producto;
+  $('mvNombre').textContent = producto.nombre;
+  // Ocultar el selector de barcode (ya no aplica)
+  $('mvBarcode').closest('.form-group').style.display = 'none';
+  const tams = Store.tamañosDe(producto);
+  $('mvTamaño').innerHTML = (tams.length ? tams : ['']).map(v=>`<option value="${esc(v)}">${esc(v)||'—'}</option>`).join('');
+  _mvFillSabores();
+  $('mvTamaño').onchange = () => { _mvFillSabores(); _mvRefreshStock(); };
+  $('mvSabor').onchange  = _mvRefreshStock;
+  _mvRefreshStock();
+  openModal('modalVariante');
+}
+function _mvFillSabores() {
+  const sabs = Store.saboresDe(_mvProducto, $('mvTamaño').value);
+  $('mvSabor').innerHTML = (sabs.length ? sabs : ['']).map(v=>`<option value="${esc(v)}">${esc(v)||'—'}</option>`).join('');
+}
+function _mvRefreshStock() {
+  const t = $('mvTamaño').value, s = $('mvSabor').value;
+  const info = Store.variantInfo(_mvProducto, t, s);
+  const st = Store.variantStock(_mvProducto.id, t, s);
+  $('mvStock').innerHTML = `Precio: <b>${fmt(info.precio)}</b> · Stock: <b>${st}</b>${info.code?` · cód ${esc(info.code)}`:''}`;
+  $('mvStock').style.color = st > 0 ? 'var(--text2)' : 'var(--red)';
+}
+function confirmVariante() {
+  if (!_mvProducto) return;
+  addToCart(_mvProducto, $('mvTamaño').value, $('mvSabor').value);
+  closeModal('modalVariante');
+  $('scanInput').focus();
+}
+
+// ═══════════════════════════════════════════════════════
+//  PAGO
+// ═══════════════════════════════════════════════════════
 function initPayment() {
-  document.querySelectorAll('.pay-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.pay-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active'); payMethod = btn.dataset.method;
-      document.getElementById('cashSection').style.display = payMethod === 'efectivo' ? 'block' : 'none';
-    });
+  document.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', () => {
+    payMethod = b.dataset.method;
+    document.querySelectorAll('.pay-btn').forEach(x => x.classList.toggle('active', x===b));
+    $('cashSection').style.display  = payMethod==='efectivo' ? '' : 'none';
+    $('mixtoSection').style.display = payMethod==='mixto'    ? '' : 'none';
+    updateChange();
+    if (payMethod==='mixto') updateMixDiff();
+  }));
+  $('cashReceived').addEventListener('input', updateChange);
+  document.querySelectorAll('.denom-btn[data-v]').forEach(b => b.addEventListener('click', () => {
+    $('cashReceived').value = (parseFloat($('cashReceived').value)||0) + parseFloat(b.dataset.v);
+    updateChange();
+  }));
+  $('denomExact').addEventListener('click', () => { $('cashReceived').value = fmtN(cartTotal()); updateChange(); });
+  $('denomClear').addEventListener('click', () => { $('cashReceived').value = ''; updateChange(); });
+  // Mixto
+  $('mixEfectivo').addEventListener('input', updateMixDiff);
+  $('mixQr').addEventListener('input', updateMixDiff);
+  $('mixQrResto').addEventListener('click', () => {
+    const ef = parseFloat($('mixEfectivo').value) || 0;
+    $('mixQr').value = fmtN(Math.max(0, cartTotal() - ef)); updateMixDiff();
   });
-  document.getElementById('cashReceived').addEventListener('input', updateChange);
-  document.querySelectorAll('.denom-btn[data-v]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const inp = document.getElementById('cashReceived');
-      inp.value = ((parseFloat(inp.value) || 0) + parseFloat(btn.dataset.v)).toFixed(2);
-      updateChange();
-    });
+  $('mixCashResto').addEventListener('click', () => {
+    const qr = parseFloat($('mixQr').value) || 0;
+    $('mixEfectivo').value = fmtN(Math.max(0, cartTotal() - qr)); updateMixDiff();
   });
-  document.getElementById('denomExact').addEventListener('click', () => {
-    document.getElementById('cashReceived').value = cartTotal().toFixed(2); updateChange();
-  });
-  document.getElementById('denomClear').addEventListener('click', () => {
-    document.getElementById('cashReceived').value = ''; updateChange();
-  });
-  document.getElementById('btnClearCart').addEventListener('click', () => {
-    if (cart.length && confirm('¿Vaciar el carrito?')) { cart = []; renderCart(); }
-  });
-  document.getElementById('btnPay').addEventListener('click', processSale);
-
-  // Fecha de venta: se actualiza automáticamente cada minuto si el usuario no la tocó
-  const ventaFechaInput = document.getElementById('ventaFecha');
-  // ventaFechaManual es global — se comparte con processSale()
-
-  function updateVentaFecha() {
-    const now   = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-    ventaFechaInput.value = local.toISOString().slice(0, 16);
-  }
-  updateVentaFecha();
-
-  // Si el usuario cambia el campo manualmente, dejar de actualizarlo automáticamente
-  ventaFechaInput.addEventListener('change', () => { ventaFechaManual = true; });
-
-  // Actualizar cada 30 segundos mientras no sea manual
-  setInterval(() => { if (!ventaFechaManual) updateVentaFecha(); }, 30000);
-
-  // Botón "Ahora": fuerza la hora actual y reactiva el auto-update
-  document.getElementById('btnFechaAhora').addEventListener('click', () => {
-    ventaFechaManual = false;
-    updateVentaFecha();
-    toast('Fecha y hora actual establecida', 'success');
-  });
+  $('btnClearCart').addEventListener('click', () => { cart=[]; renderCart(); });
+  $('btnPay').addEventListener('click', processSale);
+  $('ventaFecha').addEventListener('change', () => ventaFechaManual = true);
+  fijarFechaVentaAhora();
+}
+function fijarFechaVentaAhora() {
+  const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  $('ventaFecha').value = d.toISOString().slice(0,16);
+  ventaFechaManual = false;
 }
 
 async function processSale() {
   if (!cart.length) { toast('El carrito está vacío', 'error'); return; }
   const total = cartTotal();
-  const rec   = parseFloat(document.getElementById('cashReceived').value) || 0;
+  const rec = parseFloat($('cashReceived').value) || 0;
   if (payMethod === 'efectivo' && rec < total) { toast('Monto insuficiente', 'error'); return; }
 
-  // Fecha de venta: si el usuario la editó manualmente usar la suya,
-  // si no usar new Date() exacto del momento del cobro (más preciso que el campo)
-  const fechaInput = document.getElementById('ventaFecha').value;
-  const fechaVenta = (ventaFechaManual && fechaInput)
-    ? new Date(fechaInput).toISOString()
-    : new Date().toISOString();
-
-  // Resolver id local de IndexedDB por nombre (necesario para FIFO)
-  for (const item of cart) {
-    if (!item.product.id) {
-      const pDb = await DB.getProductByName(item.product.name);
-      if (pDb) item.product.id = pDb.id;
+  // Desglose efectivo / QR (siempre se guarda, en cualquier método)
+  let montoEfectivo = 0, montoQr = 0;
+  if (payMethod === 'efectivo') {
+    montoEfectivo = total;                       // el cambio no cuenta como ingreso
+  } else if (payMethod === 'qr') {
+    montoQr = total;
+  } else { // mixto
+    montoEfectivo = parseFloat($('mixEfectivo').value) || 0;
+    montoQr       = parseFloat($('mixQr').value) || 0;
+    if (Math.abs((montoEfectivo + montoQr) - total) > 0.005) {
+      toast(`Efectivo + QR debe sumar ${fmt(total)}`, 'error'); return;
     }
   }
 
-  // Verificar stock (usar _invCache como fuente principal)
-  for (const item of cart) {
-    const needed   = item.qty * item.barcode.multiplier;
-    const pCache   = _invCache.productos.find(p => p.name.toLowerCase() === item.product.name.toLowerCase());
-    const stockAct = pCache?.stock ?? item.product.stock ?? 0;
-    if (stockAct < needed) {
-      toast(`Sin stock suficiente: ${item.product.name} (hay ${stockAct})`, 'error'); return;
-    }
+  // Validar stock por variante
+  for (const it of cart) {
+    const need = lineUnits(it);
+    const st = Store.variantStock(it.producto.id, it.variante.tamaño, it.variante.sabor);
+    if (st < need) { toast(`Sin stock: ${it.producto.nombre} (hay ${st})`, 'error'); return; }
   }
 
-  const saleItems = [];
-  let totalCogs = 0;
-  for (const item of cart) {
-    const units = item.qty * item.barcode.multiplier;
-    const cogs  = item.product.id
-      ? await DB.consumeFIFO(item.product.id, units)
-      : item.product.cost * units; // fallback si no hay id local
-    totalCogs  += cogs;
-    const mov = {
-      product_id:   item.product.id,
-      product_name: item.product.name,
-      date:         fechaVenta,
-      type:         'venta',
-      qty:          -units,
-      notes:        `Venta POS · ${item.barcode.label || 'individual'} × ${item.qty}`,
-      usuario:      getUser().email
-    };
-    await DB.addMovement(mov);
-    Sheets.addMovimiento(mov);
-    saleItems.push({
-      product_id:    item.product.id,
-      product_name:  item.product.name,
-      barcode_code:  item.barcode.code,
-      barcode_label: item.barcode.label,
-      multiplier:    item.barcode.multiplier,
-      qty:           item.qty,
-      units,
-      price:         unitPrice(item),
-      lineTotal:     item.lineTotal,
-      item_cogs:     cogs,
-      item_profit:   item.lineTotal - cogs
-    });
-  }
+  // Confirmar el cobro
+  const metodoTxt = payMethod === 'mixto'
+    ? `mixto (efectivo ${fmt(montoEfectivo)} + QR ${fmt(montoQr)})`
+    : payMethod;
+  const cambioTxt = (payMethod === 'efectivo' && rec > total) ? `\nCambio: ${fmt(rec - total)}` : '';
+  if (!await confirmar({
+    titulo: 'Confirmar cobro',
+    mensaje: `Cobrar ${fmt(total)} en ${metodoTxt}.${cambioTxt}`,
+    ok: 'Cobrar'
+  })) return;
 
-  const sale = {
-    date:         fechaVenta,
-    items:        saleItems,
-    total,
-    total_cogs:   totalCogs,
-    gross_profit: total - totalCogs,
-    payment:      payMethod,
-    received:     payMethod === 'efectivo' ? rec : total,
-    change:       payMethod === 'efectivo' ? rec - total : 0,
-    usuario:      getUser().email,
-    synced:       false   // se marca true cuando se confirma guardado
-  };
-  lastSaleId = await DB.addSale(sale);
-  sale.id    = lastSaleId;
-  
+  const fechaInput = $('ventaFecha').value;
+  const fechaVenta = (ventaFechaManual && fechaInput) ? new Date(fechaInput).toISOString() : new Date().toISOString();
+  const usuario = localStorage.getItem('pos_user') || '';
+
   showOverlay('Registrando venta…');
-  // Timeout de seguridad: si Sheets tarda más de 12s, continuar igual
-  const sheetsTimeout = ms => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
-
   try {
-    showOverlay('Registrando venta…');
-    await Promise.race([Sheets.addVenta(sale), sheetsTimeout(12000)]);
-    await DB.saveSale({ ...sale, synced: true });
+    const items = [];
+    let totalCogs = 0;
+    const lotesParaActualizar = [];
 
-    showOverlay('Actualizando stock…');
-
-    // Para cada producto vendido: descontar FIFO en caché y actualizar Sheets
-    for (const item of saleItems) {
-      const nombreKey = item.product_name.toLowerCase();
-
-      // 1. Descontar de _invCache en orden FIFO (más antiguo primero)
-      let porDescontar = item.units;
-      const lotesOrdenados = _invCache.lotes
-        .filter(l => l.nombre_prod.toLowerCase() === nombreKey && l.qty_remaining > 0)
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-      for (const lote of lotesOrdenados) {
-        if (porDescontar <= 0) break;
-        const tomar = Math.min(lote.qty_remaining, porDescontar);
-        lote.qty_remaining -= tomar;
-        porDescontar       -= tomar;
-        // Actualizar qty_remaining del lote en Sheets (con await para garantizar orden)
-        if (lote.lot_uid) {
-          await Sheets.updateLote(
-            { lot_uid: lote.lot_uid, qty_remaining: lote.qty_remaining },
-            item.product_name
-          );
-        }
-      }
-
-      // 2. Calcular nuevo stock total sumando lotes restantes
-      const nuevoStock = _invCache.lotes
-        .filter(l => l.nombre_prod.toLowerCase() === nombreKey)
-        .reduce((s, l) => s + Math.max(0, l.qty_remaining || 0), 0);
-
-      // 3. Actualizar stock en _invCache
-      const pCache = _invCache.productos.find(p => p.name.toLowerCase() === nombreKey);
-      if (pCache) pCache.stock = nuevoStock;
-
-      // 4. Actualizar stock en hoja Inventario de Sheets
-      await Sheets.saveProduct({
-        name:      item.product_name,
-        category:  pCache?.category  || '',
-        base_unit: pCache?.base_unit || 'unidad',
-        cost:      pCache?.cost      || 0,
-        price:     pCache?.price     || item.price,
-        stock:     nuevoStock,
-        min_stock: pCache?.min_stock || 0,
-        barcodes:  pCache?.barcodes  || []
-      }, getUser().email);
-
-      // 5. Sincronizar IndexedDB (para FIFO en próximas ventas)
-      if (item.product_id) {
-        const lots = await DB.getLotsByProduct(item.product_id);
-        for (const lot of lots) {
-          const loteCache = _invCache.lotes.find(l => l.lot_uid === lot.lot_uid);
-          if (loteCache) {
-            lot.qty_remaining = loteCache.qty_remaining;
-            await DB.saveLot(lot);
-          }
-        }
-        const pDb = await DB.getProduct(item.product_id);
-        if (pDb) { pDb.stock = nuevoStock; await DB.saveProduct(pDb); }
-      }
+    for (const it of cart) {
+      const tam = it.variante.tamaño, sab = it.variante.sabor;
+      const units = lineUnits(it);
+      const { cogs, lotesTocados } = Store.consumeFIFO(it.producto.id, tam, sab, units);
+      totalCogs += cogs;
+      lotesTocados.forEach(l => lotesParaActualizar.push(l));
+      const lt = lineTotal(it);
+      items.push({
+        producto_id: it.producto.id, nombre: it.producto.nombre,
+        tamaño: tam || '', sabor: sab || '',
+        code: it.variante.code || '', multiplier: it.variante.multiplier || 1,
+        qty: it.qty, units, precio: unitPrice(it), line_total: lt, item_cogs: cogs
+      });
+      // Movimiento (append, sin esperar; si falla no rompe la venta)
+      Sheets.addMovimiento({
+        fecha: fechaVenta, producto_id: it.producto.id, tamaño: tam, sabor: sab,
+        tipo: 'venta', qty: -units, costo: 0, usuario
+      }).catch(()=>{});
     }
 
-    sessionStorage.setItem('pos_pending_ticket', JSON.stringify(sale));
-    showOverlay('Listo · recargando…');
-    setTimeout(() => reloadKeepTab(), 600);
+    const venta = {
+      fecha: fechaVenta, total, cogs: totalCogs, ganancia: total - totalCogs,
+      metodo: payMethod, monto_efectivo: montoEfectivo, monto_qr: montoQr, items
+    };
+
+    const sheetsTimeout = ms => new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')), ms));
+    await Promise.race([Sheets.addVenta(venta), sheetsTimeout(12000)]).catch(()=>{});
+
+    // Actualizar qty_restante de los lotes tocados en Sheets
+    showOverlay('Actualizando stock…');
+    for (const l of lotesParaActualizar) {
+      Sheets.updateLote(l.id, l.qty_restante).catch(()=>{});
+    }
+
+    hideOverlay();
+    toast('✓ Venta registrada', 'success');
+    showTicket(venta, rec);
+    cart = []; renderCart();
+    $('cashReceived').value = '';
+    $('mixEfectivo').value = ''; $('mixQr').value = '';
+    fijarFechaVentaAhora();
   } catch (err) {
     hideOverlay();
-    showTicket(sale);
-    document.getElementById('btnLastTicket').style.display = 'inline-flex';
-    cart = []; renderCart();
-    document.getElementById('cashReceived').value = ''; updateChange();
-    toast('Venta guardada localmente (sin conexión)', 'warn');
-    console.warn('[processSale] Error al sincronizar:', err);
+    toast('Error: ' + err.message, 'error');
   }
 }
 
 // ── Ticket ─────────────────────────────────────────────
-function showTicket(sale) {
-  const d   = new Date(sale.date);
-  const sep = '─'.repeat(36);
-  let   txt = `POS LICORES & BEBIDAS\n${sep}\nFecha: ${d.toLocaleDateString('es-BO')}  Hora: ${d.toLocaleTimeString('es-BO',{hour:'2-digit',minute:'2-digit'})}\nTicket #${sale.id}\n${sep}\n`;
-  for (const i of sale.items) {
-    const pack = i.multiplier > 1 ? ` [×${i.multiplier} ${i.barcode_label||'u.'}]` : '';
-    txt += `${i.product_name}${pack}\n  ${i.qty} × Bs ${fmtN(i.price)} = Bs ${fmtN(i.lineTotal)}\n`;
-  }
-  txt += `${sep}\nTOTAL: Bs ${fmtN(sale.total)}\nPago: ${sale.payment.toUpperCase()}\n`;
-  if (sale.payment === 'efectivo')
-    txt += `Recibido: Bs ${fmtN(sale.received)}\nCambio:   Bs ${fmtN(sale.change)}\n`;
-  txt += `${sep}\n¡Gracias por su compra!\n`;
-  document.getElementById('ticketContent').textContent = txt;
+function showTicket(venta, recibido) {
+  const lines = venta.items.map(it => {
+    const variante = [it.tamaño, it.sabor].filter(Boolean).join(' ');
+    const nombre = `${it.nombre} ${variante}`.trim().slice(0, 22).padEnd(22);
+    return `${nombre} ${String(it.qty).padStart(3)} ${fmtN(it.line_total).padStart(8)}`;
+  }).join('\n');
+  const cambio = recibido != null && venta.metodo === 'efectivo' ? recibido - venta.total : 0;
+  $('ticketContent').textContent =
+`        POS LICORES
+${new Date(venta.fecha).toLocaleString('es-BO')}
+────────────────────────────────
+Producto               Cant    Total
+────────────────────────────────
+${lines}
+────────────────────────────────
+TOTAL                      ${fmtN(venta.total).padStart(8)}
+Método: ${venta.metodo}
+${venta.metodo==='efectivo' ? `Recibido: ${fmtN(recibido||0)}\nCambio:   ${fmtN(cambio)}` : ''}${venta.metodo==='mixto' ? `Efectivo: ${fmtN(venta.monto_efectivo||0)}\nQR:       ${fmtN(venta.monto_qr||0)}` : ''}
+────────────────────────────────
+        ¡Gracias!`;
   openModal('modalTicket');
 }
 
 // ═══════════════════════════════════════════════════════
 //  PRODUCTOS
 // ═══════════════════════════════════════════════════════
-function renderProducts(filter = '') {
-  // Lee de _invCache (Sheets) — mismo caché que Inventario
-  const all   = _invCache.productos.length ? _invCache.productos : [];
-  const items = filter
-    ? all.filter(p => p.name.toLowerCase().includes(filter.toLowerCase()) || (p.category||'').includes(filter.toLowerCase()))
-    : all;
-  const grid  = document.getElementById('productsGrid');
-
-  if (!items.length) {
-    grid.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text3)">
-      Sin productos — abre Inventario para cargar desde la base de datos.</div>`;
-    return;
+function poblarCatSelect(sel, selected) {
+  sel.innerHTML = Store.categoriasOrdenadas().map(c =>
+    `<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.nombre)}</option>`).join('');
+}
+function renderProducts(filter='') {
+  const grid = $('productsGrid');
+  const q = (filter||'').toLowerCase().trim();
+  const cats = Store.categoriasOrdenadas();
+  let html = '';
+  for (const cat of cats) {
+    let prods = Store.productosDeCategoria(cat.id);
+    if (q) prods = prods.filter(p => p.nombre.toLowerCase().includes(q));
+    if (!prods.length) continue;
+    html += `<div class="cat-group"><div class="cat-title" style="${catStyle(cat.id)}">${esc(cat.nombre)} <span class="cat-count">${prods.length}</span></div><div class="cat-cards">`;
+    html += prods.map(prodCardHtml).join('');
+    html += `</div></div>`;
   }
-
-  // Agrupar por categoría
-  const groups = {};
-  for (const p of items) {
-    const c = p.category || 'extra';
-    if (!groups[c]) groups[c] = [];
-    groups[c].push(p);
+  // Productos sin categoría válida
+  const huerfanos = Store.productos.filter(p => !cats.find(c=>c.id===p.categoria_id) && (!q || p.nombre.toLowerCase().includes(q)));
+  if (huerfanos.length) {
+    html += `<div class="cat-group"><div class="cat-title">Sin categoría</div><div class="cat-cards">${huerfanos.map(prodCardHtml).join('')}</div></div>`;
   }
-  const cats = [...CAT_ORDER.filter(c => groups[c]), ...Object.keys(groups).filter(c => !CAT_ORDER.includes(c))];
+  grid.innerHTML = html || `<div class="cart-empty">No hay productos. Crea uno con "+ Nuevo".</div>`;
+}
+function prodCardHtml(p) {
+  const vars = Store.getVariantes(p);
+  const min  = p.stock_min || 0;
 
-  grid.innerHTML = cats.map(cat => {
-    const prods  = groups[cat];
-    const name   = CAT_NAMES[cat] || cat;
-    // Retraído por defecto — solo abierto si el usuario lo expandió explícitamente
-    const isOpen = collapsedCats.has('__expanded__' + cat);
-    const [bg, color] = catColor(cat);
-    return `<div class="cat-section">
-      <div class="cat-header ${isOpen ? 'open' : ''}" data-cat="${cat.replace(/'/g,'&#39;')}" onclick="toggleCat(this,this.dataset.cat)"
-           style="border-left:3px solid ${color};padding-left:10px">
-        <span style="font-weight:700;font-size:.88rem;color:${color};letter-spacing:.03em">${name}</span>
-        <span class="cat-count">${prods.length} producto${prods.length!==1?'s':''}</span>
-        <span class="cat-arrow">▶</span>
-      </div>
-      <div class="cat-grid ${isOpen ? '' : 'collapsed'}" style="max-height:${isOpen ? '9999px' : '0'}">
-        ${prods.map(prodCardHtml).join('')}
-      </div>
-    </div>`;
+  // Stock por variante + total
+  let total = 0;
+  const filas = (vars.length ? vars : [{tamaño:'',sabor:''}]).map(v => {
+    const st = Store.variantStock(p.id, v.tamaño, v.sabor);
+    total += st;
+    const etiqueta = esc([v.tamaño, v.sabor].filter(Boolean).join(' · ')) || '—';
+    const cls = st <= 0 ? 'r' : (st < min ? 'a' : 'g');
+    return `<div class="pc-var"><span class="pc-var-name">${etiqueta}</span><span class="pc-var-stock m-${cls}">${st}</span></div>`;
   }).join('');
 
-  // Listeners delegados — evitan problemas con caracteres especiales en onclick
-  grid.querySelectorAll('.prod-btn-edit').forEach(btn => {
-    btn.addEventListener('click', () => openEditProductByName(btn.dataset.name));
-  });
-  grid.querySelectorAll('.prod-btn-del').forEach(btn => {
-    btn.addEventListener('click', () => confirmDeleteByName(btn.dataset.name));
-  });
-}
-
-function toggleCat(el, cat) {
-  const grid    = el.nextElementSibling;
-  const opening = grid.classList.contains('collapsed'); // va a abrirse
-  grid.classList.toggle('collapsed', !opening);
-  el.classList.toggle('open', opening);
-  grid.style.maxHeight = opening ? '9999px' : '0';
-  // Guardar estado: solo marcar los expandidos explícitamente
-  if (opening) collapsedCats.add('__expanded__' + cat);
-  else         collapsedCats.delete('__expanded__' + cat);
-}
-
-function prodCardHtml(p) {
-  const cls   = p.stock <= 0 ? 'out' : p.stock <= p.min_stock ? 'low' : 'ok';
-  const lbl   = p.stock <= 0 ? 'Sin stock' : p.stock <= p.min_stock ? `Bajo: ${p.stock}` : `${p.stock}`;
-  const bcSvg = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>`;
-  const bcs   = (p.barcodes || []).map(b => `<span title="${b.label}">${bcSvg} ${b.code}${b.multiplier>1?' ×'+b.multiplier:''}</span>`).join(' ');
-  const alert = p.stock > 0 && p.stock <= p.min_stock ? 'alert' : '';
-  return `<div class="prod-card ${alert}">
-    <div class="prod-name">${p.name}</div>
-    <div class="prod-barcodes">${bcs || '<span style="color:var(--text3)">Sin código de barras</span>'}</div>
-    <div class="prod-footer">
-      <span class="prod-price">${fmt(p.price)}</span>
-      <span class="prod-stock ${cls}">${lbl} ${p.base_unit}(s)</span>
+  const totalCls = total <= 0 ? 'r' : (total < min ? 'a' : 'g');
+  return `<div class="prod-card" onclick='openEditProduct("${esc(p.id)}")'>
+    <div class="pc-top">
+      <div class="pc-name">${esc(p.nombre)}</div>
+      <div class="pc-stock-total m-${totalCls}" title="Stock total (suma de variantes)">${total}<span>uds</span></div>
     </div>
-    <div class="prod-actions">
-      <button class="btn btn-ghost btn-sm prod-btn-edit" data-name="${p.name.replace(/"/g,'&quot;')}">${SVG.edit} Editar</button>
-      <button class="btn btn-danger btn-sm prod-btn-del"  data-name="${p.name.replace(/"/g,'&quot;')}">${SVG.trash}</button>
-    </div>
+    <div class="pc-meta">${esc(p.presentacion)} · ${fmt(p.precio)}</div>
+    <div class="pc-vars">${filas}</div>
   </div>`;
 }
+function catStyle(id) {
+  let h = 0; for (let i=0;i<id.length;i++) h=(h*31+id.charCodeAt(i))&0xFFFF;
+  const palette = ['#F59E0B','#3FB950','#F85149','#BC8CFF','#00E5CC','#38BDF8','#FB923C','#F472B6','#818CF8','#10B981'];
+  const c = palette[h % palette.length];
+  // Toda la barra de color: fondo translúcido del color + texto en el color sólido
+  return `background:${c}22;color:${c};border-left:none`;
+}
 
-// ── Modal producto (nuevo / editar) ───────────────────
-async function openNewProduct() {
-  editProdId = null;
-  document.getElementById('modalProdTitle').textContent = 'Nuevo Producto';
-  populateCatSelect(document.getElementById('fpCat'), 'cerveza');
-  document.getElementById('fpNombre').value   = '';
-  document.getElementById('fpUnidad').value   = '';
-  document.getElementById('fpPrecio').value   = '';
-  document.getElementById('fpMinStock').value = '0';
-  document.getElementById('fpCosto').value    = '';
-  document.getElementById('fpCosto').readOnly = false;
-  document.getElementById('fpCostoGroup').style.display = '';
-  document.getElementById('fpLotesInfo').style.display  = 'none';
-  document.getElementById('fpStockGroup').style.display = '';
-  document.getElementById('fpStock').value    = '0';
-  document.getElementById('fpMargen').style.display = 'none';
-  document.getElementById('bcRows').innerHTML = '';
-  _margenWatch(() => parseFloat(document.getElementById('fpCosto').value) || 0);
+function openNewProduct() {
+  $('fpId').value = '';
+  $('modalProdTitle').textContent = 'Nuevo producto';
+  poblarCatSelect($('fpCat'), '');
+  $('fpNombre').value = '';
+  $('fpPresentacion').value = 'unidad';
+  $('fpPrecio').value = ''; $('fpCosto').value = ''; $('fpMinStock').value = '0';
+  $('varRows').innerHTML = ''; addVarRow();
+  $('btnDeleteProd').style.display = 'none';   // producto nuevo: no hay nada que eliminar
   openModal('modalProducto');
 }
-
-async function openEditProductByName(nombre) {
-  // Buscar en IndexedDB primero
-  let p = await DB.getProductByName(nombre);
-  if (p) { openEditProduct(p.id); return; }
-  // Si no está en IndexedDB, usar datos del caché y abrir modal directamente
-  const pCache = _invCache.productos.find(x => x.name.toLowerCase() === nombre.toLowerCase());
-  if (!pCache) { toast('Producto no encontrado', 'warn'); return; }
-  // Insertar en IndexedDB temporalmente para poder editar
-  const newId = await DB.addProduct({ ...pCache, active: true });
-  openEditProduct(newId);
-}
-
-async function openEditProduct(id) {
-  const p = await DB.getProduct(id);
-  if (!p) return;
-  editProdId = id;
-  document.getElementById('modalProdTitle').textContent = 'Editar Producto';
-  populateCatSelect(document.getElementById('fpCat'), p.category || 'extra');
-  document.getElementById('fpNombre').value   = p.name;
-  document.getElementById('fpUnidad').value   = p.base_unit;
-  document.getElementById('fpPrecio').value   = p.price;
-  document.getElementById('fpMinStock').value = p.min_stock;
-  document.getElementById('fpStockGroup').style.display = 'none';
-
-  // Lotes → costo
-  const info = await DB.getLotsInfo(id);
-  if (info.lots.length > 0) {
-    const oldest = info.lots[0];
-    document.getElementById('fpCosto').value    = oldest.cost.toFixed(2);
-    document.getElementById('fpCosto').readOnly = true;
-    document.getElementById('fpCostoGroup').style.display = 'none';
-    const fpLotesEl = document.getElementById('fpLotesInfo');
-    const lines = info.lots.map((l, i) => {
-      const fecha = fmtDate(l.date);
-      const exp   = expiryTag(l.expiry);
-      return `<div class="lot-row ${i===0?'oldest':''}" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <span class="lot-num">#${i+1}</span>
-        <span class="lot-cost">Bs ${l.cost.toFixed(2)}/u</span>
-        <span class="lot-qty">${l.qty_remaining} ud. ${i===0?'<b style="color:var(--cyan)">← próximo</b>':''}</span>
-        <span class="lot-date">${fecha}</span>
-        ${exp}
-        <button class="btn-edit-lot" data-lot-id="${l.id}" data-prod-id="${id}" title="Editar lote" style="margin-left:auto">✏</button>
-        <button class="btn-del-lot"  data-lot-id="${l.id}" data-prod-id="${id}" title="Eliminar lote">🗑</button>
-      </div>`;
-    }).join('');
-    fpLotesEl.style.display = 'block';
-    fpLotesEl.innerHTML = `
-      <div class="lot-list-title">Lotes activos — el costo del primero calcula la ganancia</div>
-      ${lines}
-      ${info.lots.length > 1 ? `<div class="lot-notice">Promedio ponderado: Bs ${info.avgCost.toFixed(2)}/u</div>` : ''}`;
-    fpLotesEl.querySelectorAll('.btn-edit-lot').forEach(btn => {
-      btn.addEventListener('click', () => openEditLote(parseInt(btn.dataset.lotId), parseInt(btn.dataset.prodId), () => openEditProduct(id)));
-    });
-    fpLotesEl.querySelectorAll('.btn-del-lot').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        await deleteLote(parseInt(btn.dataset.lotId), parseInt(btn.dataset.prodId));
-        openEditProduct(id);
-      });
-    });
-    _margenWatch(() => oldest.cost);
-  } else {
-    document.getElementById('fpCosto').value    = p.cost || '';
-    document.getElementById('fpCosto').readOnly = false;
-    document.getElementById('fpCostoGroup').style.display = '';
-    document.getElementById('fpLotesInfo').style.display  = 'none';
-    _margenWatch(() => parseFloat(document.getElementById('fpCosto').value) || 0);
-  }
-
-  document.getElementById('bcRows').innerHTML = '';
-  (p.barcodes || []).forEach(bc => addBcRow(bc.code, bc.multiplier, bc.label));
+function openEditProduct(id) {
+  const p = Store.getProducto(id); if (!p) return;
+  $('fpId').value = p.id;
+  $('modalProdTitle').textContent = 'Editar producto';
+  $('btnDeleteProd').style.display = '';       // editar: permitir eliminar
+  poblarCatSelect($('fpCat'), p.categoria_id);
+  $('fpNombre').value = p.nombre;
+  $('fpPresentacion').value = p.presentacion || 'unidad';
+  $('fpPrecio').value = p.precio; $('fpCosto').value = p.costo; $('fpMinStock').value = p.stock_min;
+  $('varRows').innerHTML = '';
+  const vars = Store.getVariantes(p);
+  if (vars.length) vars.forEach(addVarRow); else addVarRow();
   openModal('modalProducto');
 }
-
-function _margenWatch(costoFn) {
-  const inp = document.getElementById('fpPrecio');
-  const div = document.getElementById('fpMargen');
-  const fn  = () => {
-    const price = parseFloat(inp.value);
-    const cost  = costoFn();
-    if (!isNaN(price) && cost > 0) {
-      const gan = price - cost;
-      const pct = (gan / price * 100).toFixed(1);
-      const col = gan >= 0 ? 'var(--green)' : 'var(--red)';
-      div.style.display = 'block';
-      div.innerHTML = `<span style="color:${col};font-size:.8rem">Ganancia: <b>Bs ${gan.toFixed(2)}</b> · Margen: <b>${pct}%</b> <span style="color:var(--text3)">(costo Bs ${cost.toFixed(2)})</span></span>`;
-    } else {
-      div.style.display = 'none';
-    }
-  };
-  inp.removeEventListener('input', inp._mfn || null);
-  inp._mfn = fn; inp.addEventListener('input', fn); fn();
+// Fila de variante: tamaño · sabor · código · multiplicador · precio · costo
+function addVarRow(v = {}) {
+  const div = document.createElement('div');
+  div.className = 'var-row';
+  div.innerHTML =
+    `<input class="form-input vr-tam"   placeholder="2L"     value="${esc(v.tamaño)}">
+     <input class="form-input vr-sab"   placeholder="Cola"   value="${esc(v.sabor)}">
+     <input class="form-input vr-code"  placeholder="Código" value="${esc(v.code)}">
+     <input class="form-input vr-mult"  type="number" min="1" value="${v.multiplier||1}">
+     <input class="form-input vr-precio" type="number" min="0" step="0.50" placeholder="base" value="${v.precio!=null&&v.precio!==''?v.precio:''}">
+     <input class="form-input vr-costo"  type="number" min="0" step="0.50" placeholder="base" value="${v.costo!=null&&v.costo!==''?v.costo:''}">
+     <button class="bc-del" onclick="this.parentElement.remove()">✕</button>`;
+  $('varRows').appendChild(div);
 }
-
-function addBcRow(code = '', mult = 1, label = 'Individual') {
-  const d = document.createElement('div'); d.className = 'bc-row';
-  d.innerHTML = `
-    <input class="form-input bc-code" placeholder="Código EAN-13, interno…" value="${code}">
-    <input class="form-input bc-mult" type="number" min="1" value="${mult}" title="Unidades base por escaneo">
-    <input class="form-input bc-lbl"  placeholder="Etiqueta" value="${label}">
-    <button class="btn-rm" onclick="this.parentElement.remove()">✕</button>`;
-  document.getElementById('bcRows').appendChild(d);
-}
-
 async function saveProduct() {
-  const name  = document.getElementById('fpNombre').value.trim();
-  const price = parseFloat(document.getElementById('fpPrecio').value);
-  if (!name)               { toast('El nombre es obligatorio', 'error'); return; }
-  if (isNaN(price)||price<=0) { toast('Precio inválido', 'error'); return; }
+  const nombre = $('fpNombre').value.trim();
+  if (!nombre) { toast('El nombre es obligatorio', 'error'); return; }
+  const precio = parseFloat($('fpPrecio').value) || 0;
+  if (precio <= 0) { toast('Precio base inválido', 'error'); return; }
 
-  const barcodes = [];
-  document.querySelectorAll('.bc-row').forEach(row => {
-    const code = row.querySelector('.bc-code').value.trim();
-    const mult = parseInt(row.querySelector('.bc-mult').value) || 1;
-    const lbl  = row.querySelector('.bc-lbl').value.trim() || 'Individual';
-    if (code) barcodes.push({ code, multiplier: mult, label: lbl });
-  });
+  const num = s => { const n = parseFloat(s); return isNaN(n) ? null : n; };
+  const variantes = [...document.querySelectorAll('.var-row')].map(r => ({
+    tamaño:     r.querySelector('.vr-tam').value.trim(),
+    sabor:      r.querySelector('.vr-sab').value.trim(),
+    code:       r.querySelector('.vr-code').value.trim(),
+    multiplier: parseInt(r.querySelector('.vr-mult').value) || 1,
+    precio:     num(r.querySelector('.vr-precio').value),
+    costo:      num(r.querySelector('.vr-costo').value)
+  })).filter(v => v.tamaño || v.sabor || v.code);
 
-  // Validar que ningún código de barras esté en uso por otro producto
-  if (barcodes.length) {
-    const todos = await DB.getActiveProducts();
-    for (const bc of barcodes) {
-      const conflicto = todos.find(p =>
-        p.id !== editProdId &&
-        (p.barcodes || []).some(b => b.code === bc.code)
-      );
-      if (conflicto) {
-        toast(`El código "${bc.code}" ya está asignado a "${conflicto.name}"`, 'error');
-        return;
-      }
+  // Avisar de códigos duplicados dentro del producto
+  const codes = variantes.map(v=>v.code).filter(Boolean);
+  if (new Set(codes).size !== codes.length) { toast('Hay códigos de barras repetidos', 'error'); return; }
+
+  const esEdicion = !!$('fpId').value;
+  const id = $('fpId').value || nuevoProductoId();
+  // …y duplicados contra OTROS productos (rompería el escaneo)
+  for (const code of codes) {
+    const hit = Store.buscarPorBarcode(code);
+    if (hit && hit.producto.id !== id) {
+      toast(`El código ${code} ya lo usa "${hit.producto.nombre}"`, 'error'); return;
     }
   }
 
-  const fpCosto = document.getElementById('fpCosto');
-  let stock = 0, cost = 0;
-
-  if (editProdId) {
-    const ex = await DB.getProduct(editProdId);
-    stock = ex?.stock || 0;
-    cost  = fpCosto.readOnly ? (ex?.cost || 0) : (parseFloat(fpCosto.value) || 0);
-  } else {
-    stock = parseInt(document.getElementById('fpStock').value) || 0;
-    cost  = parseFloat(fpCosto.value) || 0;
-  }
-
-  const prod = {
-    name,
-    category:  document.getElementById('fpCat').value,
-    base_unit: document.getElementById('fpUnidad').value.trim() || 'unidad',
-    cost, price, stock,
-    min_stock: parseInt(document.getElementById('fpMinStock').value) || 0,
-    barcodes, active: true
+  if (!await confirmar({ titulo: esEdicion?'Guardar cambios':'Crear producto', mensaje:`¿Guardar el producto "${nombre}"?`, ok:'Guardar' })) return;
+  const p = {
+    id, categoria_id: $('fpCat').value,
+    nombre,
+    presentacion: $('fpPresentacion').value,
+    precio, costo: parseFloat($('fpCosto').value) || 0,
+    stock_min: parseFloat($('fpMinStock').value) || 0, variantes
   };
-  if (editProdId) prod.id = editProdId;
-  
-  await DB.saveProduct(prod);
+  showOverlay('Guardando…');
+  await Sheets.saveProducto(p).catch(()=>{});
+  // Reflejar en caché
+  const idx = Store.productos.findIndex(x => x.id === id);
+  if (idx >= 0) Store.productos[idx] = p; else Store.productos.push(p);
+  hideOverlay();
   closeModal('modalProducto');
-  toast(`Producto "${prod.name}" guardado`, 'success');
-
-  // Guardar en Sheets y luego recargar desde Sheets
-  Sheets.saveProduct(prod, getUser().email)
-    .then(() => { setStatus('ok', 'Producto sincronizado'); refreshDesdeSheets(); })
-    .catch(err => {
-      setStatus('error', 'Sin conexión — guardado localmente');
-      console.warn('[saveProduct] Error al sincronizar:', err);
-    });
+  toast('✓ Producto guardado', 'success');
+  renderProducts($('prodSearch').value);
 }
-
-// ── Eliminar producto ──────────────────────────────────
-async function confirmDeleteByName(nombre) {
-  if (!confirm(`¿Eliminar "${nombre}"?\n\nSe eliminarán también todos sus lotes. Esta acción no se puede deshacer.`)) return;
+async function deleteProduct(id) {
+  const p = Store.getProducto(id); if (!p) return;
+  const stockRest = Store.lotes
+    .filter(l => l.producto_id === id)
+    .reduce((s, l) => s + (l.qty_restante || 0), 0);
+  const aviso = stockRest > 0 ? `\n⚠ Aún tiene ${stockRest} u en stock (sus lotes quedarán huérfanos en la hoja Lotes).` : '';
+  if (!await confirmar({ titulo:'Eliminar producto', mensaje:`¿Eliminar "${p.nombre}"? No se puede deshacer.${aviso}`, ok:'Eliminar', peligro:true })) return;
   showOverlay('Eliminando…');
-  try {
-    // Borrar en IndexedDB si existe
-    const p = await DB.getProductByName(nombre);
-    if (p) {
-      const lots = await DB.getLotsByProduct(p.id);
-      for (const l of lots) await DB._delete('lots', l.id);
-      await DB.deleteProduct(p.id);
-    }
-    // Borrar en Sheets
-    await Sheets.deleteProd({ name: nombre });
-    hideOverlay();
-    toast(`"${nombre}" eliminado`, 'success');
-    refreshDesdeSheets();
-  } catch (err) {
-    hideOverlay();
-    toast('Error al eliminar', 'error');
-    console.error('[confirmDeleteByName]', err);
-  }
+  await Sheets.deleteProducto(id).catch(()=>{});
+  Store.productos = Store.productos.filter(x => x.id !== id);
+  hideOverlay(); toast('🗑 Eliminado', 'success');
+  renderProducts($('prodSearch').value);
 }
 
-// Alias por compatibilidad con llamadas antiguas
-function confirmDelete(id) {
-  DB.getProduct(id).then(p => { if (p) confirmDeleteByName(p.name); });
+// ═══════════════════════════════════════════════════════
+//  CATEGORÍAS
+// ═══════════════════════════════════════════════════════
+function renderCategorias() {
+  const body = $('catBody');
+  const cats = Store.categoriasOrdenadas();
+  if (!cats.length) { body.innerHTML = `<tr><td colspan="4" class="empty-cell">Sin categorías</td></tr>`; return; }
+  body.innerHTML = cats.map(c => {
+    const n = Store.productosDeCategoria(c.id).length;
+    return `<tr>
+      <td>${c.orden}</td>
+      <td style="font-weight:600">${esc(c.nombre)}</td>
+      <td>${n}</td>
+      <td>
+        <button class="btn btn-ghost btn-sm" onclick='openEditCategoria("${esc(c.id)}")'>✏</button>
+        <button class="btn btn-ghost btn-sm" onclick='deleteCategoria("${esc(c.id)}")'>🗑</button>
+      </td></tr>`;
+  }).join('');
+}
+function openNewCategoria() {
+  $('fcId').value = ''; $('modalCatTitle').textContent = 'Nueva categoría';
+  $('fcNombre').value = ''; $('fcOrden').value = Store.categorias.length + 1;
+  openModal('modalCategoria');
+}
+function openEditCategoria(id) {
+  const c = Store.categorias.find(x=>x.id===id); if (!c) return;
+  $('fcId').value = c.id; $('modalCatTitle').textContent = 'Editar categoría';
+  $('fcNombre').value = c.nombre; $('fcOrden').value = c.orden;
+  openModal('modalCategoria');
+}
+async function saveCategoria() {
+  const nombre = $('fcNombre').value.trim();
+  if (!nombre) { toast('Nombre obligatorio', 'error'); return; }
+  const esEdicion = !!$('fcId').value;
+  if (!await confirmar({ titulo: esEdicion?'Guardar cambios':'Crear categoría', mensaje:`¿Guardar la categoría "${nombre}"?`, ok:'Guardar' })) return;
+  const id = $('fcId').value || nuevaCategoriaId();
+  const c = { id, nombre, orden: parseInt($('fcOrden').value) || 0 };
+  showOverlay('Guardando…');
+  await Sheets.saveCategoria(c).catch(()=>{});
+  const idx = Store.categorias.findIndex(x=>x.id===id);
+  if (idx>=0) Store.categorias[idx]=c; else Store.categorias.push(c);
+  hideOverlay(); closeModal('modalCategoria'); toast('✓ Categoría guardada','success');
+  renderCategorias();
+}
+async function deleteCategoria(id) {
+  const c = Store.categorias.find(x=>x.id===id); if (!c) return;
+  const n = Store.productosDeCategoria(id).length;
+  if (n > 0) { toast(`Tiene ${n} productos — reasígnalos primero`, 'error'); return; }
+  if (!await confirmar({ titulo:'Eliminar categoría', mensaje:`¿Eliminar la categoría "${c.nombre}"?`, ok:'Eliminar', peligro:true })) return;
+  showOverlay('Eliminando…');
+  await Sheets.deleteCategoria(id).catch(()=>{});
+  Store.categorias = Store.categorias.filter(x=>x.id!==id);
+  hideOverlay(); toast('🗑 Eliminada','success'); renderCategorias();
 }
 
 // ═══════════════════════════════════════════════════════
 //  INVENTARIO
 // ═══════════════════════════════════════════════════════
-// ── Sync inventario desde Sheets ──────────────────────
-let _invSyncing = false; // evitar llamadas simultáneas
-
-// Caché de Sheets — fuente única de verdad para productos y lotes
-let _invCache = { productos: [], lotes: [] };
-
-// Buscar producto por código de barras en _invCache
-function findBarcodeInCache(code) {
-  code = code.trim();
-  for (const p of _invCache.productos) {
-    const bc = (p.barcodes || []).find(b => b.code === code);
-    if (bc) return { product: p, barcode: bc };
+// Una fila de inventario por cada variante declarada del producto.
+// Si el producto no tiene variantes, una fila vacía (tamaño/sabor en blanco).
+function todasLasVariantes() {
+  const out = [];
+  for (const p of Store.productos) {
+    const vars = Store.getVariantes(p);
+    if (vars.length) vars.forEach(v => out.push({ producto: p, tamaño: v.tamaño||'', sabor: v.sabor||'', code: v.code||'' }));
+    else out.push({ producto: p, tamaño: '', sabor: '', code: '' });
   }
-  return null;
+  return out;
+}
+// Panel "Por vencer" en la vista de Inventario
+function renderVencerPanel() {
+  const panel = $('invVencerPanel'); if (!panel) return;
+  const lista = lotesPorVencer();
+  if (!lista.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  panel.classList.add('collapsed');   // retraído por defecto en cada render
+  $('vencerCount').textContent = `${lista.length} lote${lista.length>1?'s':''}`;
+  $('vencerList').innerHTML = lista.map(({lote, prod, dias}) => {
+    const variante = esc([lote.tamaño, lote.sabor].filter(Boolean).join(' · '));
+    const urgente = dias < 0;       // ya vencido
+    return `<div class="vencer-item ${urgente?'vencido':''}"
+       onclick='verLotes("${esc(lote.producto_id)}", ${esc(JSON.stringify(lote.tamaño||''))}, ${esc(JSON.stringify(lote.sabor||''))})'
+       title="Ver lotes">
+      <span class="vi-prod">${prod?esc(prod.nombre):'?'}${variante?` · ${variante}`:''}</span>
+      <span class="vi-qty">${lote.qty_restante} u</span>
+      <span class="vi-fecha">${fmtDate(lote.vencimiento)}</span>
+      <span class="vi-dias ${urgente?'m-r':'m-a'}">${textoVence(dias)}</span>
+    </div>`;
+  }).join('');
 }
 
-// Buscar productos por nombre en _invCache
-function searchProductsInCache(q) {
-  q = q.toLowerCase().trim();
-  if (!q) return [];
-  return _invCache.productos
-    .filter(p => p.name.toLowerCase().includes(q) || (p.category||'').includes(q))
-    .slice(0, 10);
-}
-
-// Recarga datos de Sheets y actualiza todas las vistas — llamar después de guardar
-async function refreshDesdeSheets() {
-  await syncInventario(true);
-  renderProducts(document.getElementById('prodSearch').value);
-}
-
-async function syncInventario(silent = false) {
-  if (_invSyncing) return;
-  _invSyncing = true;
-
-  const btn  = document.getElementById('btnRefreshInv');
-  const icon = document.getElementById('invRefreshIcon');
-  if (btn)  btn.disabled = true;
-  if (icon) icon.style.animation = 'spin .7s linear infinite';
-
-  if (!silent) setStatus('loading', 'Cargando inventario…');
-
-  try {
-    // Leer Inventario y Lotes directamente de Sheets
-    const [invRows, lotRows, catRows] = await Promise.all([
-      Sheets.readSheet('Inventario'),
-      Sheets.readSheet('Lotes'),
-      Sheets.readSheet('Catalogo').catch(() => [])
-    ]);
-
-    // Parsear productos desde hoja Inventario
-    // Col: ID(0) | Nombre(1) | Cat(2) | Unidad(3) | Costo(4) | Precio(5) | Stock(6) | MinStock(7) | Barcodes(8)
-    const seenProds = new Set();
-    _invCache.productos = invRows.slice(1)
-      .filter(r => r[1])
-      .reduce((acc, r) => {
-        const nombre = String(r[1]).trim();
-        if (!nombre || seenProds.has(nombre.toLowerCase())) return acc;
-        seenProds.add(nombre.toLowerCase());
-        const catRow = catRows.slice(1).find(c => String(c[0]).trim().toLowerCase() === nombre.toLowerCase());
-        let barcodes = [];
-        try { barcodes = JSON.parse(String(r[8] || '[]')); } catch (_) {}
-        const stockVal = parseFloat(r[6]) || 0;
-        acc.push({
-          name:      nombre,
-          category:  String(r[2] || catRow?.[1] || 'extra').trim().toLowerCase(),
-          base_unit: String(r[3] || catRow?.[2] || 'unidad').trim(),
-          cost:      parseFloat(r[4]) || 0,
-          price:     parseFloat(r[5]) || 0,
-          stock:     stockVal,
-          min_stock: parseFloat(r[7]) || 0,
-          barcodes,
-          active:    true
-        });
-        return acc;
-      }, []);
-
-    // Helpers de parseo inline
-    const _v = (r, n) => (r[n] != null ? String(r[n]).trim() : '');
-    const _n = (r, n) => parseFloat(_v(r, n)) || 0;
-    const _d = (r, n) => {
-      const raw = _v(r, n);
-      if (!raw) return null;
-      const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if (m) { const d = new Date(`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}T12:00:00`); return isNaN(d.getTime()) ? null : d.toISOString(); }
-      const d = new Date(raw);
-      return isNaN(d.getTime()) ? null : d.toISOString();
-    };
-
-    // Parsear lotes desde hoja Lotes
-    // Col: ID(0) | Nombre(1) | FechaCompra(2) | Costo(3) | QtyIni(4) | QtyRest(5) | Notas(6) | Vencimiento(7)
-    const seenLots = new Set();
-    _invCache.lotes = lotRows.slice(1)
-      .filter(r => r[1] && (parseFloat(r[5]) || 0) > 0)
-      .reduce((acc, r) => {
-        const uid = String(r[0] || '').trim();
-        const nombre = String(r[1] || '').trim().toLowerCase();
-        const sig = `${nombre}|${String(r[2]||'').trim()}|${r[3]||0}`;
-        if (uid && seenLots.has(uid)) return acc;
-        if (!uid && seenLots.has(sig)) return acc;
-        seenLots.add(uid || sig);
-        acc.push({
-          lot_uid:       uid,
-          nombre_prod:   String(r[1] || '').trim(),
-          date:          _d(r, 2),
-          cost:          _n(r, 3),
-          qty_initial:   _n(r, 4),
-          qty_remaining: _n(r, 5),
-          notes:         _v(r, 6),
-          expiry:        _d(r, 7)
-        });
-        return acc;
-      }, []);
-
-    setStatus('ok', 'Inventario actualizado');
-    updateExpiryBadge();
-  } catch (err) {
-    setStatus('error', 'Sin conexión — datos locales');
-    console.warn('[syncInventario]', err);
-  } finally {
-    _invSyncing = false;
-    if (btn)  btn.disabled = false;
-    if (icon) icon.style.animation = '';
-    renderInventory(document.getElementById('invSearch').value);
-  }
-}
-
-function invSortKey(p, col) {
-  if (col === 'name')      return p.name.toLowerCase();
-  if (col === 'category')  return p.category.toLowerCase();
-  if (col === 'base_unit') return (p.base_unit||'').toLowerCase();
-  if (col === 'stock')     return p.stock;
-  if (col === 'min_stock') return p.min_stock;
-  if (col === 'status')    return p.stock<=0 ? 0 : p.stock<=p.min_stock ? 1 : 2;
-  if (col === 'expiry')    return p._proxExpiry ?? Infinity; // precalculado abajo
-  return '';
-}
-
-function renderInventory(filter = '') {
-  // Lee directo de _invCache (datos de Sheets) — no toca IndexedDB
-  let prods = _invCache.productos;
-  if (!prods.length) {
-    document.getElementById('invBody').innerHTML =
-      `<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:30px">
-        Sin datos — pulsa "Actualizar" para cargar desde la base de datos
-      </td></tr>`;
-    return;
-  }
-
-  // Cruzar lotes por nombre de producto
-  const lotesPorProd = {};
-  for (const l of _invCache.lotes) {
-    const key = l.nombre_prod.toLowerCase();
-    if (!lotesPorProd[key]) lotesPorProd[key] = [];
-    lotesPorProd[key].push(l);
-  }
-
-  // Enriquecer productos con vencimiento próximo
-  prods = prods.map(p => {
-    const key    = p.name.toLowerCase();
-    const lotes  = (lotesPorProd[key] || []).filter(l => l.expiry);
-    let proxExpiry = null, proxExpiryTs = Infinity;
-    for (const l of lotes) {
-      const ts = new Date(l.expiry).getTime();
-      if (ts < proxExpiryTs) { proxExpiryTs = ts; proxExpiry = l.expiry; }
-    }
-    return { ...p, _proxExpiry: proxExpiryTs, _proxExpiryIso: proxExpiry };
-  });
-
-  // Filtrar
-  if (filter) prods = prods.filter(p => p.name.toLowerCase().includes(filter.toLowerCase()));
-
-  // Ordenar
-  prods = [...prods].sort((a, b) => {
-    const va = invSortKey(a, invSort.col), vb = invSortKey(b, invSort.col);
-    return va < vb ? -invSort.dir : va > vb ? invSort.dir : 0;
-  });
-
-  document.querySelectorAll('.th-sort').forEach(th => {
-    th.classList.remove('asc', 'desc');
-    if (th.dataset.col === invSort.col) th.classList.add(invSort.dir === 1 ? 'asc' : 'desc');
-  });
-
-  const tbody = document.getElementById('invBody');
-  tbody.innerHTML = '';
-  const frag = document.createDocumentFragment();
-
-  for (const p of prods) {
-    const proxVencIso  = p._proxExpiryIso;
-    const expiryDays   = proxVencIso ? daysToExpiry(proxVencIso) : null;
-    const expiryAlerta = expiryDays !== null && expiryDays <= EXPIRY_WARN_DAYS;
-
-    const cls = p.stock <= 0 ? 'out' : p.stock <= p.min_stock ? 'low' : 'ok';
-    const lbl = p.stock <= 0 ? 'Agotado' : p.stock <= p.min_stock ? 'Stock bajo' : 'OK';
-    const col = p.stock <= 0 ? 'var(--red)' : p.stock <= p.min_stock ? 'var(--amber)' : 'var(--green)';
-
-    const tr = document.createElement('tr');
-    tr.className = (p.stock > 0 && p.stock <= p.min_stock) || expiryAlerta ? 'alert-row' : '';
-    tr.innerHTML = `
-      <td><strong>${p.name}</strong></td>
-      <td><span class="cat-badge" style="font-size:.7rem;padding:2px 7px;${catStyle(p.category)}">${CAT_NAMES[p.category]||p.category}</span></td>
-      <td>${p.base_unit}</td>
-      <td style="font-family:var(--mono);font-weight:700;color:${col}">${p.stock}</td>
-      <td style="color:var(--text3)">${p.min_stock}</td>
-      <td><span class="badge badge-${cls}">${lbl}</span></td>
-      <td>${proxVencIso ? expiryTag(proxVencIso) : '<span style="color:var(--text3);font-size:.75rem">—</span>'}</td>
-      <td>
-        <button class="btn-icon inv-btn-stock" data-name="${p.name.replace(/"/g,'&quot;')}">+ Stock</button>
-        <button class="btn-icon inv-btn-edit"  data-name="${p.name.replace(/"/g,'&quot;')}" style="margin-left:4px">✏</button>
-      </td>`;
-    frag.appendChild(tr);
-  }
-  tbody.appendChild(frag);
-}
-
-// Wrapper que resuelve el id actual por nombre (evita ids obsoletos tras sync)
-async function openStockAdjByName(nombre) {
-  const p = await DB.getProductByName(nombre);
-  if (p) { openStockAdj(p.id); return; }
-  // Si no está en IndexedDB, abrir con nombre directo desde caché
-  adjProdId = null;
-  openModal('modalStock');
-  document.getElementById('adjModalTitle').textContent  = `Stock · ${nombre}`;
-  document.getElementById('adjStockActual').textContent = '—';
-  document.getElementById('adjCantidad').value    = '';
-  document.getElementById('adjCostoTotal').value  = '';
-  document.getElementById('adjCosto').value       = '';
-  document.getElementById('adjNotas').value       = '';
-  document.getElementById('adjFecha').value       = new Date().toISOString().split('T')[0];
-  document.getElementById('adjVencimiento').value = '';
-  await loadAdjProduct(nombre, null);
-}
-
-// ── Ajuste de stock / lote FIFO ────────────────────────
-async function openStockAdj(id = null) {
-  adjProdId = null;
-  const all = await DB.getActiveProducts();
-
-  // Autocomplete producto
-  const pinput = document.getElementById('adjProdInput');
-  const plist  = document.getElementById('adjProdList');
-  const phid   = document.getElementById('adjProdId');
-  pinput.value = ''; phid.value = ''; plist.classList.remove('open');
-
-  // Usar _invCache para la lista — muestra stock real de Sheets
-  const prodList = _invCache.productos.length ? _invCache.productos : all.map(p => ({ name: p.name, stock: p.stock, base_unit: p.base_unit }));
-
-  function renderPList(q) {
-    const matches = q
-      ? prodList.filter(p => p.name.toLowerCase().includes(q.toLowerCase())).slice(0, 10)
-      : prodList.slice(0, 10);
-    plist.innerHTML = matches.map(p => `<div class="ac-item" data-name="${p.name}">
-      <span>${p.name}</span><span class="ac-sub">${p.stock} ${p.base_unit||'u.'}(s)</span></div>`).join('');
-    plist.classList.toggle('open', !!matches.length);
-  }
-  pinput.oninput  = () => renderPList(pinput.value);
-  pinput.onfocus  = () => renderPList(pinput.value);
-  plist.onclick   = async e => {
-    const item = e.target.closest('.ac-item'); if (!item) return;
-    pinput.value = item.dataset.name;
-    plist.classList.remove('open');
-    // Buscar en IndexedDB por nombre para obtener el id local
-    const pDb = await DB.getProductByName(item.dataset.name);
-    phid.value = pDb?.id || '';
-    await loadAdjProduct(item.dataset.name, pDb?.id || null);
-  };
-  document.addEventListener('pointerdown', function cl(e) {
-    if (!e.target.closest('#adjProdWrap')) { plist.classList.remove('open'); document.removeEventListener('pointerdown',cl); }
-  });
-
-  // Tipo de movimiento
-  const tinput = document.getElementById('adjTipoInput');
-  const tlist  = document.getElementById('adjTipoList');
-  const thid   = document.getElementById('adjTipo');
-  tinput.value = TIPOS_MOV[0].l; thid.value = TIPOS_MOV[0].v;
-  tlist.innerHTML = TIPOS_MOV.map(t=>`<div class="ac-item" data-v="${t.v}">${t.l}</div>`).join('');
-  tinput.onfocus  = () => tlist.classList.add('open');
-  tlist.onclick   = e => {
-    const item = e.target.closest('.ac-item'); if (!item) return;
-    const t = TIPOS_MOV.find(x => x.v === item.dataset.v);
-    tinput.value = t.l; thid.value = t.v; tlist.classList.remove('open');
-    document.getElementById('adjCostoGroup').style.display = t.v === 'entrada' ? 'block' : 'none';
-  };
-  document.addEventListener('pointerdown', function cl2(e) {
-    if (!e.target.closest('#adjTipoWrap')) { tlist.classList.remove('open'); document.removeEventListener('pointerdown',cl2); }
-  });
-
-  document.getElementById('adjCostoGroup').style.display = 'block';
-  document.getElementById('adjCantidad').value    = '';
-  document.getElementById('adjCostoTotal').value  = '';
-  document.getElementById('adjCosto').value       = '';
-  document.getElementById('adjNotas').value       = '';
-  document.getElementById('adjFecha').value       = new Date().toISOString().split('T')[0];
-  document.getElementById('adjVencimiento').value = '';
-  document.getElementById('adjLotsPreview').innerHTML = '';
-  document.getElementById('adjProdGroup').style.display = id ? 'none' : 'flex';
-
-  if (id) {
-    const p = all.find(x => x.id === id);
-    if (p) { pinput.value = p.name; phid.value = p.id; await loadAdjProduct(p.name, p.id); }
-  }
-  openModal('modalStock');
-}
-
-// Lee lotes directo de _invCache (Sheets) por nombre de producto
-async function loadAdjProduct(nombreProd, pid) {
-  // Datos del producto desde IndexedDB (stock, unidad)
-  const p = pid ? await DB.getProduct(pid) : await DB.getProductByName(nombreProd);
-  if (!p) return;
-  adjProdId = p.id;
-
-  // Lotes desde _invCache (Sheets) — fuente directa
-  const nombreKey = (nombreProd || p.name).toLowerCase();
-  const lotesCache = _invCache.lotes.filter(l =>
-    l.nombre_prod.toLowerCase() === nombreKey && l.qty_remaining > 0
-  ).sort((a, b) => new Date(a.date) - new Date(b.date));
-
-  // Stock: sumar qty_remaining de los lotes activos de Sheets
-  const stockSheets = lotesCache.reduce((s, l) => s + l.qty_remaining, 0);
-
-  document.getElementById('adjModalTitle').textContent   = `Stock · ${p.name}`;
-  document.getElementById('adjStockActual').textContent  = `${stockSheets || p.stock} ${p.base_unit}(s)`;
-
-  const prev = document.getElementById('adjLotsPreview');
-  const last = lotesCache[lotesCache.length - 1];
-  document.getElementById('adjCosto').value      = last ? last.cost.toFixed(6) : (p.cost || '');
-  document.getElementById('adjCostoTotal').value = '';
-
-  if (lotesCache.length) {
-    prev.innerHTML = `<div class="lot-list-title">Lotes activos (FIFO — desde base de datos)</div>` +
-      lotesCache.map((l, i) => {
-        const exp = expiryTag(l.expiry);
-        return `<div class="lot-row ${i===0?'oldest':''}" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span class="lot-num">#${i+1}</span>
-          <span class="lot-cost">Bs ${l.cost.toFixed(2)}/u</span>
-          <span class="lot-qty">${l.qty_remaining} ud.${i===0?' ← próximo':''}</span>
-          <span class="lot-date">${fmtDate(l.date)}</span>
-          ${exp}
-          <button class="btn-edit-lot" data-lot-uid="${l.lot_uid}" data-prod-name="${p.name}" title="Editar lote" style="margin-left:auto">✏</button>
-          <button class="btn-del-lot"  data-lot-uid="${l.lot_uid}" data-prod-name="${p.name}" title="Eliminar lote">🗑</button>
-        </div>`;
-      }).join('') +
-      `<div class="lot-notice">Nuevo lote se creará independiente con el costo que ingreses.</div>`;
-    prev.querySelectorAll('.btn-edit-lot').forEach((btn, i) => {
-      const lote = lotesCache[i];
-      btn.addEventListener('click', () => openEditLoteFromCache(lote, p.name));
-    });
-    prev.querySelectorAll('.btn-del-lot').forEach((btn, i) => {
-      const lote = lotesCache[i];
-      btn.addEventListener('click', () => deleteLoteFromCache(lote, p.name));
-    });
-  } else {
-    prev.innerHTML = `<div class="lot-notice">Sin lotes activos — este será el primero para este producto.</div>`;
-  }
-}
-
-// Calcula stock real sumando qty_remaining de lotes activos en _invCache
-function calcStockDesdeCache(nombreProd) {
-  const key = nombreProd.toLowerCase();
-  return _invCache.lotes
-    .filter(l => l.nombre_prod.toLowerCase() === key)
-    .reduce((s, l) => s + (l.qty_remaining || 0), 0);
-}
-
-// Actualiza stock del producto en _invCache y en Sheets (hoja Inventario)
-function pushStockASheets(nombreProd, nuevoStock) {
-  const pCache = _invCache.productos.find(p => p.name.toLowerCase() === nombreProd.toLowerCase());
-  if (pCache) pCache.stock = nuevoStock;
-  Sheets.saveProduct({
-    name:      nombreProd,
-    category:  pCache?.category  || '',
-    base_unit: pCache?.base_unit || 'unidad',
-    cost:      pCache?.cost      || 0,
-    price:     pCache?.price     || 0,
-    stock:     nuevoStock,
-    min_stock: pCache?.min_stock || 0,
-    barcodes:  pCache?.barcodes  || []
-  }, getUser().email).catch(() => {});
-}
-
-async function saveStockAdj() {
-  if (!adjProdId) { toast('Selecciona un producto', 'error'); return; }
-  const tipo = document.getElementById('adjTipo').value;
-  const qty  = parseInt(document.getElementById('adjCantidad').value);
-  const nota = document.getElementById('adjNotas').value.trim();
-  const fechaInput = document.getElementById('adjFecha').value;
-  const fecha = fechaInput ? new Date(fechaInput).toISOString() : new Date().toISOString();
-  const p = await DB.getProduct(adjProdId);
-  const vencInput   = document.getElementById('adjVencimiento').value;
-  const vencimiento = vencInput ? new Date(vencInput).toISOString() : null;
-  if (!qty || qty <= 0) { toast('Cantidad inválida', 'error'); return; }
-
-  const nombreProd = p?.name || document.getElementById('adjProdInput').value.trim();
-
-  if (tipo === 'entrada') {
-    const costoTotal = parseFloat(document.getElementById('adjCostoTotal').value);
-    if (isNaN(costoTotal) || costoTotal <= 0) { toast('Ingresa el costo total del lote', 'error'); return; }
-    const costo  = calcCostoUnitario(costoTotal, qty);
-    const lotUid = generarLoteId();
-
-    // 1. Guardar en IndexedDB
-    if (adjProdId) {
-      const lotId = await DB.addLot({ lot_uid: lotUid, product_id: adjProdId, date: fecha, expiry: vencimiento, cost: costo, cost_total: costoTotal, qty_initial: qty, qty_remaining: qty, notes: nota, synced: false });
-      const mov = { product_id: adjProdId, product_name: nombreProd, date: fecha, type: 'entrada', qty, notes: `Lote FIFO · Total Bs ${costoTotal} · Bs ${costo.toFixed(4)}/u · ${nota}`, usuario: getUser().email, synced: false };
-      await DB.addMovement(mov);
-    }
-
-    // 2. Agregar lote al _invCache inmediatamente
-    _invCache.lotes.push({
-      lot_uid:       lotUid,
-      nombre_prod:   nombreProd,
-      date:          fecha,
-      expiry:        vencimiento,
-      cost:          costo,
-      qty_initial:   qty,
-      qty_remaining: qty,
-      notes:         nota
-    });
-
-    // 3. Recalcular stock desde caché y actualizar en Sheets
-    const nuevoStock = calcStockDesdeCache(nombreProd);
-    pushStockASheets(nombreProd, nuevoStock);
-
-    closeModal('modalStock');
-    toast(`Lote guardado · ${qty} ud.`, 'success');
-
-    // Enviar a Sheets y recargar desde Sheets
-    const newLotObj = { lot_uid: lotUid, date: fecha, expiry: vencimiento, cost: costo, qty_initial: qty, qty_remaining: qty, notes: nota };
-    Promise.all([
-      Sheets.addLote(newLotObj, nombreProd),
-      Sheets.addMovimiento({ product_name: nombreProd, date: fecha, type: 'entrada', qty, notes: `Lote FIFO · Total Bs ${costoTotal} · Bs ${costo.toFixed(4)}/u · ${nota}`, usuario: getUser().email })
-    ]).then(() => { setStatus('ok', 'Lote en BD'); refreshDesdeSheets(); updateExpiryBadge(); })
-      .catch(() => setStatus('error', 'Sin conexión — guardado local'));
-
-  } else {
-    // Ajuste positivo o negativo
-    const delta = tipo === 'ajuste_neg' ? -qty : qty;
-
-    // 1. Actualizar _invCache — ajustar qty_remaining del primer lote disponible
-    const key = nombreProd.toLowerCase();
-    let restante = Math.abs(delta);
-    if (delta < 0) {
-      // Descontar de lotes FIFO en caché
-      const lotesOrden = _invCache.lotes
-        .filter(l => l.nombre_prod.toLowerCase() === key && l.qty_remaining > 0)
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
-      for (const l of lotesOrden) {
-        if (restante <= 0) break;
-        const tomar = Math.min(l.qty_remaining, restante);
-        l.qty_remaining -= tomar;
-        restante        -= tomar;
-        if (l.lot_uid) Sheets.updateLote({ lot_uid: l.lot_uid, qty_remaining: l.qty_remaining }, nombreProd).catch(() => {});
+function renderInventory(filter='') {
+  renderVencerPanel();
+  const body = $('invBody');
+  const q = (filter||'').toLowerCase().trim();
+  let vars = todasLasVariantes();
+  if (q) vars = vars.filter(v => v.producto.nombre.toLowerCase().includes(q) || Store.categoriaNombre(v.producto.categoria_id).toLowerCase().includes(q));
+  if (!vars.length) { body.innerHTML = `<tr><td colspan="8" class="empty-cell">Sin productos</td></tr>`; return; }
+  body.innerHTML = vars.map(v => {
+    const stock = Store.variantStock(v.producto.id, v.tamaño, v.sabor);
+    const min = v.producto.stock_min || 0;
+    let estado = '<span class="badge ok">OK</span>';
+    if (stock <= 0) estado = '<span class="badge red">Agotado</span>';
+    else if (stock < min) estado = '<span class="badge warn">Stock bajo</span>';
+    // vencimiento más próximo
+    const lots = Store.lotesActivos(v.producto.id, v.tamaño, v.sabor);
+    let venceTxt = '—';
+    if (lots.length) {
+      const prox = lots.map(l=>l.vencimiento).filter(Boolean).sort()[0];
+      if (prox) {
+        const d = daysToExpiry(prox);
+        venceTxt = `<span class="${d!=null && d<=EXPIRY_WARN_DAYS?'exp-warn':''}">${fmtDate(prox)}</span>`;
       }
-    } else {
-      // Ajuste positivo — agregar al último lote o crear referencia temporal
-      const ultLote = _invCache.lotes.filter(l => l.nombre_prod.toLowerCase() === key).slice(-1)[0];
-      if (ultLote) ultLote.qty_remaining += delta;
     }
-
-    // 2. Recalcular stock y actualizar Sheets
-    const nuevoStock = calcStockDesdeCache(nombreProd);
-    pushStockASheets(nombreProd, nuevoStock);
-
-    // 3. Guardar en IndexedDB
-    if (adjProdId) {
-      await DB.updateStock(adjProdId, delta);
-      const mov = { product_id: adjProdId, product_name: nombreProd, date: fecha, type: tipo, qty: delta, notes: nota, usuario: getUser().email, synced: false };
-      await DB.addMovement(mov);
-      Sheets.addMovimiento(mov).catch(() => {});
-    }
-
-    closeModal('modalStock');
-    toast(`Ajuste guardado · ${delta > 0 ? '+' : ''}${delta} ud.`, 'success');
-    // Recargar desde Sheets para mostrar datos reales
-    refreshDesdeSheets().then(() => setStatus('ok', 'Ajuste en BD'));
-  }
-}
-
-// ═══════════════════════════════════════════════════════
-//  VENTAS — lee directo desde Google Sheets
-// ═══════════════════════════════════════════════════════
-
-// Caché de filas de ventas indexada por posición en la lista invertida
-const _salesCache = {};
-
-async function renderSales(dateStr = '') {
-  const d     = dateStr || new Date().toISOString().split('T')[0];
-  const tbody = document.getElementById('salesBody');
-  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:20px">Cargando…</td></tr>`;
-
-  let rows = [];
-  try {
-    rows = await Sheets.readSheet('Ventas');
-  } catch (_) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--red);padding:20px">Error al leer la base de datos</td></tr>`;
-    return;
-  }
-
-  // ID(0) | Fecha(1) | Hora(2) | Total Bs(3) | COGS Bs(4) | Ganancia Bs(5) | Método(6) | Ítems(7)
-  const [ay, am, ad] = d.split('-');
-  const fechaFiltro  = `${ad}/${am}/${ay}`;
-
-  const sales = rows.slice(1).filter(r => r[0] && r[1] === fechaFiltro);
-
-  let effTotal = 0, effCount = 0, qrTotal = 0, qrCount = 0, dayTotal = 0;
-  for (const r of sales) {
-    const total   = parseFloat(r[3]) || 0;
-    const metodo  = (r[6] || '').toLowerCase();
-    dayTotal += total;
-    if (metodo === 'efectivo') { effTotal += total; effCount++; }
-    else                       { qrTotal  += total; qrCount++;  }
-  }
-
-  document.getElementById('vTotalDia').textContent  = fmt(dayTotal);
-  document.getElementById('vCountDia').textContent  = `${sales.length} venta${sales.length!==1?'s':''}`;
-  document.getElementById('vCashTotal').textContent = fmt(effTotal);
-  document.getElementById('vCashCount').textContent = `${effCount} op.`;
-  document.getElementById('vQrTotal').textContent   = fmt(qrTotal);
-  document.getElementById('vQrCount').textContent   = `${qrCount} op.`;
-
-  if (!sales.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:30px">Sin ventas para esta fecha</td></tr>`;
-    return;
-  }
-
-  // Invertir para mostrar la más reciente primero y guardar en caché
-  const reversed = [...sales].reverse();
-  Object.keys(_salesCache).forEach(k => delete _salesCache[k]);
-  reversed.forEach((r, i) => { _salesCache[i] = r; });
-
-  tbody.innerHTML = reversed.map((r, i) => {
-    const id       = r[0] || `—`;
-    const hora     = r[2] || '—';
-    const met      = { efectivo:'💵 Efectivo', qr:'📱 QR' }[(r[6]||'').toLowerCase()] || r[6];
-    const total    = parseFloat(r[3]) || 0;
-    const ganancia = parseFloat(r[5]) || 0;
-    let   items    = [];
-    try { items = JSON.parse(r[7] || '[]'); } catch (_) {}
-    return `<tr>
-      <td style="color:var(--text3);font-family:var(--mono)">${id}</td>
-      <td>${hora}</td>
-      <td style="font-family:var(--mono);font-weight:700;color:var(--amber)">${fmt(total)}</td>
-      <td style="font-family:var(--mono);color:var(--green)">${fmt(ganancia)}</td>
-      <td>${met}</td>
-      <td style="color:var(--text2)">${items.length} ítem(s)</td>
-      <td><button class="btn-edit-venta" data-sidx="${i}">✏ Editar</button></td>
-      <td><button class="btn-del-venta" data-sidx="${i}" title="Eliminar venta">${SVG.trash}</button></td>
+    const nLotes = lots.length;
+    return `<tr class="inv-row" onclick='verLotes("${esc(v.producto.id)}", ${esc(JSON.stringify(v.tamaño||''))}, ${esc(JSON.stringify(v.sabor||''))})' title="Ver lotes FIFO">
+      <td>${esc(v.producto.nombre)}</td>
+      <td>${esc(Store.categoriaNombre(v.producto.categoria_id))}</td>
+      <td>${esc(v.tamaño)||'—'}</td><td>${esc(v.sabor)||'—'}</td>
+      <td style="font-weight:700">${stock} ${nLotes?`<span class="inv-lotes-tag">${nLotes} lote${nLotes>1?'s':''}</span>`:''}</td><td>${min}</td>
+      <td>${estado}</td><td>${venceTxt}</td>
     </tr>`;
   }).join('');
-
-  // Listener editar — directo en cada botón (sin acumulación porque tbody.innerHTML se reemplaza)
-  tbody.querySelectorAll('.btn-edit-venta').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const r = _salesCache[btn.dataset.sidx];
-      if (r) openEditVenta(r);
-    });
-  });
 }
 
-// ═══════════════════════════════════════════════════════
-//  EDITAR VENTA
-// ═══════════════════════════════════════════════════════
+// ── Modal: lotes FIFO de una variante ─────────────────
+function verLotes(prodId, tam, sab) {
+  const p = Store.getProducto(prodId); if (!p) return;
+  const variante = [tam, sab].filter(Boolean).join(' · ') || '—';
+  $('lotesTitulo').textContent = `${p.nombre} · ${variante}`;
+  // Todos los lotes de la variante, ordenados FIFO (más antiguo primero)
+  const lots = Store.lotesDeVariante(prodId, tam, sab);
+  const stockTotal = lots.filter(l=>l.qty_restante>0).reduce((s,l)=>s+l.qty_restante,0);
+  $('lotesResumen').innerHTML = `Stock total: <b>${stockTotal}</b> · ${lots.length} lote${lots.length!==1?'s':''}`;
 
-function openEditVenta(r) {
-  // r = array de la fila: ID(0)|Fecha dd/MM/yyyy(1)|Hora(2)|Total(3)|COGS(4)|Ganancia(5)|Método(6)|Ítems(7)
-  document.getElementById('evId').value = r[0] || '';
-
-  // Fecha dd/MM/yyyy → yyyy-MM-dd
-  const parts = String(r[1] || '').split('/');
-  document.getElementById('evFecha').value = parts.length === 3
-    ? `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`
-    : '';
-
-  // Hora: recortar a HH:MM
-  document.getElementById('evHora').value  = String(r[2] || '').substring(0, 5);
-  document.getElementById('evTotal').value = fmtN(parseFloat(r[3]) || 0);
-  document.getElementById('evCogs').value  = fmtN(parseFloat(r[4]) || 0);
-  document.getElementById('evMetodo').value = (r[6]||'').toLowerCase() === 'qr' ? 'qr' : 'efectivo';
-
-  let itemsStr = r[7] || '[]';
-  try { itemsStr = JSON.stringify(JSON.parse(itemsStr), null, 2); } catch (_) {}
-  document.getElementById('evItems').value = itemsStr;
-
-  _evUpdatePreview();
-  openModal('modalEditVenta');
-}
-
-function _evUpdatePreview() {
-  const total    = parseFloat(document.getElementById('evTotal').value) || 0;
-  const cogs     = parseFloat(document.getElementById('evCogs').value)  || 0;
-  const ganancia = total - cogs;
-  document.getElementById('evGanancia').value = ganancia.toFixed(2);
-  const margin = total > 0 ? (ganancia / total * 100).toFixed(1) : '0.0';
-  const col    = ganancia >= 0 ? 'var(--green)' : 'var(--red)';
-  const prev   = document.getElementById('evGananciaPreview');
-  prev.classList.add('show');
-  prev.innerHTML = `<span style="color:${col}">Ganancia calculada: <b>Bs ${ganancia.toFixed(2)}</b> · Margen: <b>${margin}%</b></span>`;
-}
-
-async function saveEditVenta() {
-  const id     = document.getElementById('evId').value.trim();
-  const fecha  = document.getElementById('evFecha').value;
-  const hora   = document.getElementById('evHora').value;
-  const total  = parseFloat(document.getElementById('evTotal').value);
-  const cogs   = parseFloat(document.getElementById('evCogs').value) || 0;
-  const metodo = document.getElementById('evMetodo').value;
-  let   items  = [];
-
-  if (!id)                      { toast('Esta venta no tiene ID de la base de datos', 'error'); return; }
-  if (!fecha)                   { toast('La fecha es obligatoria', 'error'); return; }
-  if (isNaN(total) || total < 0){ toast('Total inválido', 'error'); return; }
-
-  try { items = JSON.parse(document.getElementById('evItems').value || '[]'); }
-  catch { toast('JSON de ítems con error de sintaxis — corrígelo primero', 'error'); return; }
-
-  const ganancia = total - cogs;
-  const [ay, am, ad] = fecha.split('-');
-  const fechaSheets  = `${ad}/${am}/${ay}`;
-
-  showOverlay('Guardando cambios en la base de datos…');
-  try {
-    await Sheets.editVenta({ id, fecha: fechaSheets, hora: hora||'00:00', total, cogs, ganancia, metodo, items: JSON.stringify(items) });
-    closeModal('modalEditVenta');
-    hideOverlay();
-    toast('✅ Venta actualizada', 'success');
-    renderSales(document.getElementById('ventasFecha').value);
-  } catch (err) {
-    hideOverlay();
-    toast(`Error al guardar: ${err.message}`, 'error');
-    console.error('[saveEditVenta]', err);
+  if (!lots.length) {
+    $('lotesBody').innerHTML = `<tr><td colspan="8" class="empty-cell">Sin lotes. Usa "+ Entrada / Ajuste".</td></tr>`;
+  } else {
+    $('lotesBody').innerHTML = lots.map((l, i) => {
+      const agotado = (l.qty_restante||0) <= 0;
+      const dVence  = daysToExpiry(l.vencimiento);
+      const venceCls = dVence!=null && dVence<=EXPIRY_WARN_DAYS ? 'exp-warn' : '';
+      const valor = (l.qty_restante||0) * (l.costo_u||0);
+      return `<tr class="${agotado?'lote-agotado':''}">
+        <td>${i+1}º</td>
+        <td>${fmtDate(l.fecha_compra)}</td>
+        <td>${fmt(l.costo_u||0)}</td>
+        <td><b>${l.qty_restante||0}</b> / ${l.qty_inicial||0}</td>
+        <td>${fmt(valor)}</td>
+        <td class="${venceCls}">${l.vencimiento?fmtDate(l.vencimiento):'—'}</td>
+        <td class="mono" style="font-size:.72rem">${esc(l.notas)}</td>
+        <td class="lote-acciones">
+          <button class="btn btn-ghost btn-sm" onclick='editarLote("${esc(l.id)}")' title="Editar lote">✏</button>
+          <button class="btn btn-ghost btn-sm" onclick='borrarLote("${esc(l.id)}")' title="Eliminar lote">🗑</button>
+        </td>
+      </tr>`;
+    }).join('');
   }
+  // Recordar la variante abierta para refrescar tras editar/borrar
+  _lotesCtx = { prodId, tam, sab };
+  openModal('modalLotes');
+}
+let _lotesCtx = null;
+function refrescarLotesModal() {
+  if (_lotesCtx) verLotes(_lotesCtx.prodId, _lotesCtx.tam, _lotesCtx.sab);
 }
 
-// (initSalesDeleteHold eliminado — listener registrado una sola vez en init())
-
-// ═══════════════════════════════════════════════════════
-//  ELIMINAR LOTE (desde modal de stock)
-// ═══════════════════════════════════════════════════════
-// ── Editar lote existente ─────────────────────────────
-let _editLoteCallback = null;
-
-// Editar lote usando datos del caché de Sheets (sin necesitar id de IndexedDB)
-function openEditLoteFromCache(lote, nombreProd) {
-  _editLoteCallback = () => {
-    // Refrescar caché y modal después de guardar
-    syncInventario(true).then(() => loadAdjProduct(nombreProd, null));
-  };
-  const toDateVal = iso => iso ? new Date(iso).toISOString().split('T')[0] : '';
-
-  document.getElementById('elLoteId').value        = lote.lot_uid; // usamos lot_uid como id temporal
-  document.getElementById('elProdId').value         = ''; // no tenemos prodId local
-  document.getElementById('elProdNombre').textContent = nombreProd;
-  document.getElementById('elQty').value            = lote.qty_remaining;
-  document.getElementById('elCosto').value          = lote.cost;
-  document.getElementById('elNotas').value          = lote.notes || '';
-  document.getElementById('elFecha').value          = toDateVal(lote.date);
-  document.getElementById('elVencimiento').value    = toDateVal(lote.expiry);
-
-  // Guardar referencia al lote del caché para saveEditLote
-  document.getElementById('elLoteId').dataset.lotUid  = lote.lot_uid;
-  document.getElementById('elLoteId').dataset.fromCache = '1';
-
+// ── Editar un lote (todos los campos) ─────────────────
+const _isoADate = iso => iso ? fechaLocalISO(iso) : '';
+function editarLote(lotId) {
+  const l = Store.lotes.find(x => x.id === lotId); if (!l) return;
+  const p = Store.getProducto(l.producto_id);
+  const variante = [l.tamaño, l.sabor].filter(Boolean).join(' · ') || '—';
+  $('elId').value = l.id;
+  $('elProdInfo').innerHTML = `<b>${p?esc(p.nombre):'?'}</b> · ${esc(variante)} <span class="mono">(${esc(l.id)})</span>`;
+  $('elQtyRest').value = l.qty_restante || 0;
+  $('elQtyIni').value  = l.qty_inicial  || 0;
+  $('elCosto').value   = l.costo_u      || 0;
+  $('elFecha').value   = _isoADate(l.fecha_compra);
+  $('elVence').value   = _isoADate(l.vencimiento);
+  $('elNotas').value   = l.notas || '';
   openModal('modalEditLote');
 }
-
-// Borrar lote usando lot_uid del caché — directo a Sheets
-async function deleteLoteFromCache(lote, nombreProd) {
-  const fecha = fmtDate(lote.date);
-  const costo = `Bs ${(lote.cost||0).toFixed(2)}/u`;
-  if (!confirm(`¿Eliminar este lote?\n\nFecha: ${fecha}  ·  Costo: ${costo}  ·  Qty restante: ${lote.qty_remaining} ud.\n\nEsta acción no se puede deshacer.`)) return;
-
+async function guardarEditLote() {
+  const l = Store.lotes.find(x => x.id === $('elId').value); if (!l) return;
+  const qr = parseInt($('elQtyRest').value); const qi = parseInt($('elQtyIni').value);
+  const co = parseFloat($('elCosto').value); const fe = $('elFecha').value;
+  if (isNaN(qr) || qr < 0) { toast('Qty restante inválida', 'error'); return; }
+  if (!fe) { toast('Fecha de compra obligatoria', 'error'); return; }
+  if (!await confirmar({ titulo:'Guardar cambios', mensaje:'¿Guardar los cambios de este lote?', ok:'Guardar' })) return;
+  // Actualizar el objeto del lote en caché
+  l.qty_restante = qr;
+  l.qty_inicial  = isNaN(qi) ? l.qty_inicial : qi;
+  l.costo_u      = isNaN(co) ? l.costo_u : co;
+  l.fecha_compra = new Date(fe + 'T12:00:00').toISOString();
+  l.vencimiento  = $('elVence').value ? new Date($('elVence').value + 'T12:00:00').toISOString() : '';
+  l.notas        = $('elNotas').value.trim();
+  showOverlay('Guardando lote…');
+  await Sheets.editLote(l).catch(()=>{});
+  hideOverlay(); closeModal('modalEditLote'); toast('✓ Lote actualizado', 'success');
+  refrescarLotesModal();
+  renderInventory($('invSearch').value);
+}
+async function borrarLote(lotId) {
+  const l = Store.lotes.find(x => x.id === lotId); if (!l) return;
+  if (!await confirmar({ titulo:'Eliminar lote', mensaje:`Qty restante: ${l.qty_restante} · Costo: ${fmt(l.costo_u)}.\nNo se puede deshacer.`, ok:'Eliminar', peligro:true })) return;
   showOverlay('Eliminando lote…');
-  try {
-    // Borrar en Sheets
-    if (lote.lot_uid) await Sheets.deleteLote(lote.lot_uid);
-    // Borrar en IndexedDB si existe
-    const lotDb = await DB.getLotByUid(lote.lot_uid);
-    if (lotDb) {
-      await DB._delete('lots', lotDb.id);
-      await DB.recalcStock(lotDb.product_id);
-      const pDb = await DB.getProduct(lotDb.product_id);
-      if (pDb) await Sheets.saveProduct(pDb, getUser().email);
-    }
-    hideOverlay();
-    toast('Lote eliminado', 'success');
-    // Recargar desde Sheets y refrescar modal
-    await refreshDesdeSheets();
-    updateExpiryBadge();
-    await loadAdjProduct(nombreProd, null);
-  } catch (err) {
-    hideOverlay();
-    toast(`Error: ${err.message}`, 'error');
-    console.error('[deleteLoteFromCache]', err);
-  }
+  await Sheets.deleteLote(lotId).catch(()=>{});
+  Store.lotes = Store.lotes.filter(x => x.id !== lotId);
+  hideOverlay(); toast('🗑 Lote eliminado', 'success');
+  refrescarLotesModal();
+  renderInventory($('invSearch').value);
 }
 
-async function openEditLote(lotId, prodId, onSave) {
-  const lot  = await DB.getLot(lotId);
-  const prod = await DB.getProduct(prodId);
-  if (!lot) { toast('Lote no encontrado', 'error'); return; }
-
-  _editLoteCallback = onSave || null;
-
-  document.getElementById('elLoteId').value     = lotId;
-  document.getElementById('elProdId').value      = prodId;
-  document.getElementById('elProdNombre').textContent = prod?.name || '';
-  document.getElementById('elQty').value         = lot.qty_remaining;
-  document.getElementById('elCosto').value       = lot.cost;
-  document.getElementById('elNotas').value       = lot.notes || '';
-
-  // Fecha compra: ISO → yyyy-MM-dd
-  const toDateVal = iso => iso ? new Date(iso).toISOString().split('T')[0] : '';
-  document.getElementById('elFecha').value       = toDateVal(lot.date);
-  document.getElementById('elVencimiento').value = toDateVal(lot.expiry);
-
-  openModal('modalEditLote');
-}
-
-async function saveEditLote() {
-  const elId    = document.getElementById('elLoteId');
-  const fromCache = elId.dataset.fromCache === '1';
-  const lotUid  = elId.dataset.lotUid || '';
-  const lotId   = fromCache ? null : parseInt(elId.value);
-  const prodId  = parseInt(document.getElementById('elProdId').value) || null;
-  const qty     = parseFloat(document.getElementById('elQty').value);
-  const costo   = parseFloat(document.getElementById('elCosto').value);
-  const notas   = document.getElementById('elNotas').value.trim();
-  const fechaV  = document.getElementById('elFecha').value;
-  const vencV   = document.getElementById('elVencimiento').value;
-  const nombreProd = document.getElementById('elProdNombre').textContent.trim();
-
-  if (isNaN(qty)   || qty < 0)   { toast('Cantidad inválida', 'error'); return; }
-  if (isNaN(costo) || costo <= 0){ toast('Costo inválido', 'error'); return; }
-  if (!fechaV)                    { toast('Fecha de compra obligatoria', 'error'); return; }
-
-  const updated = {
-    lot_uid:       lotUid,
-    qty_remaining: qty,
-    cost:          costo,
-    date:          new Date(fechaV).toISOString(),
-    expiry:        vencV ? new Date(vencV).toISOString() : null,
-    notes:         notas,
-    synced:        false
+function openStockAdj() {
+  const sel = $('adjProd');
+  sel.innerHTML = Store.productos.map(p=>`<option value="${esc(p.id)}">${esc(p.nombre)}</option>`).join('');
+  if (!Store.productos.length) { toast('Crea un producto primero', 'error'); return; }
+  const fillTam = () => {
+    const p = Store.getProducto(sel.value);
+    const tams = Store.tamañosDe(p);
+    $('adjTamaño').innerHTML = (tams.length?tams:['']).map(v=>`<option value="${esc(v)}">${esc(v)||'—'}</option>`).join('');
+    fillSab();
   };
-
-  // Actualizar en IndexedDB si existe localmente
-  const lotDb = lotUid ? await DB.getLotByUid(lotUid) : (lotId ? await DB.getLot(lotId) : null);
-  if (lotDb) {
-    await DB.saveLot({ ...lotDb, ...updated });
-    if (prodId || lotDb.product_id) await DB.recalcStock(prodId || lotDb.product_id);
-  }
-
-  // Siempre actualizar en Sheets
-  showOverlay('Guardando en base de datos…');
-  try {
-    await Sheets.editLote({ ...updated, id: lotUid }, nombreProd);
-    setStatus('ok', 'Lote actualizado');
-  } catch (err) {
-    setStatus('error', 'Sin conexión — guardado local');
-    console.warn('[saveEditLote]', err);
-  } finally {
-    hideOverlay();
-  }
-
-  // Limpiar flag de caché
-  elId.dataset.fromCache = '';
-  elId.dataset.lotUid    = '';
-
-  closeModal('modalEditLote');
-  toast('Lote actualizado', 'success');
-  // Recargar desde Sheets
-  refreshDesdeSheets().then(() => { updateExpiryBadge(); if (_editLoteCallback) _editLoteCallback(); });
+  const fillSab = () => {
+    const p = Store.getProducto(sel.value);
+    const sabs = Store.saboresDe(p, $('adjTamaño').value);
+    $('adjSabor').innerHTML = (sabs.length?sabs:['']).map(v=>`<option value="${esc(v)}">${esc(v)||'—'}</option>`).join('');
+  };
+  sel.onchange = fillTam;
+  $('adjTamaño').onchange = fillSab;
+  fillTam();
+  $('adjCantidad').value=''; $('adjCostoTotal').value=''; $('adjCosto').value='';
+  $('adjFecha').value = fechaLocalISO();
+  $('adjVencimiento').value=''; $('adjNotas').value='';
+  openModal('modalStock');
 }
-
-async function deleteLote(lotId, productId) {
-  const lot = await DB.getLot(lotId);
-  if (!lot) { toast('Lote no encontrado', 'error'); return; }
-
-  const loteUid  = lot.lot_uid || '';
-  const fecha    = fmtDate(lot.date);
-  const costo    = `Bs ${(lot.cost||0).toFixed(2)}/u`;
-  const qty      = lot.qty_remaining;
-  if (!confirm(`¿Eliminar este lote?\n\nFecha: ${fecha}  ·  Costo: ${costo}  ·  Qty restante: ${qty} ud.\n\nEl stock se recalculará automáticamente. Esta acción no se puede deshacer.`)) return;
-
-  showOverlay('Eliminando lote…');
-  try {
-    // 1. Borrar de IndexedDB
-    await DB._delete('lots', lotId);
-    // 2. Recalcular stock local
-    await DB.recalcStock(productId);
-    // 3. Borrar la fila real en Sheets usando el lot_uid
-    if (loteUid) {
-      await Sheets.deleteLote(loteUid);
-    }
-    // 4. Actualizar stock del producto en Sheets
-    const p = await DB.getProduct(productId);
-    if (p) await Sheets.saveProduct(p, getUser().email);
-
-    hideOverlay();
-    toast('Lote eliminado y stock recalculado', 'success');
-    updateExpiryBadge();
-    const pDel = await DB.getProduct(productId);
-    await loadAdjProduct(pDel?.name || '', productId);
-    renderInventory(document.getElementById('invSearch').value);
-  } catch (err) {
-    hideOverlay();
-    toast(`Error: ${err.message}`, 'error');
-    console.error('[deleteLote]', err);
-  }
+function recalcCostoUnit() {
+  const total = parseFloat($('adjCostoTotal').value)||0;
+  const cant  = parseFloat($('adjCantidad').value)||0;
+  $('adjCosto').value = cant>0 ? calcCostoUnitario(total, cant) : '';
+}
+async function saveStockAdj() {
+  const p = Store.getProducto($('adjProd').value); if (!p) return;
+  const cant = parseInt($('adjCantidad').value)||0;
+  const total = parseFloat($('adjCostoTotal').value)||0;
+  if (cant<=0) { toast('Cantidad inválida','error'); return; }
+  const costoU = calcCostoUnitario(total, cant);
+  const fecha = $('adjFecha').value;
+  if (!fecha) { toast('Fecha obligatoria','error'); return; }
+  const variante = [$('adjTamaño').value, $('adjSabor').value].filter(Boolean).join(' · ');
+  const avisoCosto = costoU <= 0 ? '\n⚠ Costo 0: la ganancia de estas unidades se calculará sin costo.' : '';
+  if (!await confirmar({ titulo:'Registrar entrada', mensaje:`Agregar lote de ${cant} u a "${p.nombre}${variante?` · ${variante}`:''}" (costo ${fmt(costoU)}/u).${avisoCosto}`, ok:'Guardar' })) return;
+  const lote = {
+    id: nuevoLoteId(), producto_id: p.id,
+    tamaño: $('adjTamaño').value, sabor: $('adjSabor').value,
+    fecha_compra: new Date(fecha+'T12:00:00').toISOString(),
+    costo_u: costoU, qty_inicial: cant, qty_restante: cant,
+    vencimiento: $('adjVencimiento').value ? new Date($('adjVencimiento').value+'T12:00:00').toISOString() : '',
+    notas: $('adjNotas').value.trim()
+  };
+  showOverlay('Guardando lote…');
+  await Sheets.addLote(lote).catch(()=>{});
+  Sheets.addMovimiento({ fecha: lote.fecha_compra, producto_id: p.id, tamaño: lote.tamaño, sabor: lote.sabor, tipo:'entrada', qty: cant, costo: costoU, usuario: localStorage.getItem('pos_user')||'' }).catch(()=>{});
+  Store.lotes.push(lote);
+  hideOverlay(); closeModal('modalStock'); toast('✓ Lote agregado','success');
+  renderInventory($('invSearch').value);
 }
 
 // ═══════════════════════════════════════════════════════
-//  REPORTES
+//  VENTAS
 // ═══════════════════════════════════════════════════════
+const _salesCache = {};
+async function renderSales(dateStr='') {
+  if (!dateStr) dateStr = fechaLocalISO();
+  setStatus('loading','Leyendo ventas…');
+  let ventas;
+  try { ventas = await Sheets.loadVentasRango(dateStr, dateStr); setStatus('ok','Base de datos'); }
+  catch (e) { setStatus('error','Error'); toast(e.message,'error'); return; }
 
-// ── Leer y parsear ventas desde Sheets filtradas por rango ──
-async function _loadVentasRango(desde, hasta) {
-  const rows     = await Sheets.readSheet('Ventas');
-  const fromD    = new Date(desde + 'T00:00:00');
-  const toD      = new Date(hasta  + 'T23:59:59');
-  // ID(0)|Fecha(1 dd/MM/yyyy)|Hora(2)|Total(3)|COGS(4)|Ganancia(5)|Método(6)|Ítems(7)
-  return rows.slice(1).filter(r => {
-    if (!r[0] || !r[1]) return false;
-    const parts = String(r[1]).split('/');
-    if (parts.length !== 3) return false;
-    const d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T12:00:00`);
-    return d >= fromD && d <= toD;
-  }).map(r => {
-    let items = [];
-    try { items = JSON.parse(r[7] || '[]'); } catch (_) {}
-    return {
-      id:           r[0],
-      fecha:        r[1],
-      hora:         r[2],
-      total:        parseFloat(r[3]) || 0,
-      total_cogs:   parseFloat(r[4]) || 0,
-      gross_profit: parseFloat(r[5]) || 0,
-      payment:      (r[6] || '').toLowerCase(),
-      items
-    };
-  });
+  let totalDia=0, cash=0, cashN=0, qr=0, qrN=0;
+  const body = $('salesBody');
+  Object.keys(_salesCache).forEach(k => delete _salesCache[k]);  // sin restos del día anterior
+  body.innerHTML = ventas.map((v,i) => {
+    _salesCache[i] = v;
+    totalDia += v.total;
+    const { efectivo, qr: vqr } = desglosePago(v);
+    if (efectivo > 0) { cash += efectivo; cashN++; }
+    if (vqr > 0)      { qr   += vqr;      qrN++; }
+    const nItems = (v.items||[]).reduce((s,it)=>s+(it.qty||0),0);
+    return `<tr>
+      <td class="mono">${esc(v.id)}</td><td>${esc(v.hora)}</td>
+      <td>${fmtN(v.total)}</td><td>${fmtN(v.ganancia)}</td>
+      <td>${esc(v.metodo)}</td><td>${nItems}</td>
+      <td><button class="btn btn-ghost btn-sm btn-del-venta" data-i="${i}">🗑</button></td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="7" class="empty-cell">Sin ventas este día</td></tr>`;
+
+  $('vTotalDia').textContent = fmt(totalDia);
+  $('vCountDia').textContent = `${ventas.length} ventas`;
+  $('vCashTotal').textContent = fmt(cash); $('vCashCount').textContent = `${cashN} op.`;
+  $('vQrTotal').textContent = fmt(qr); $('vQrCount').textContent = `${qrN} op.`;
 }
 
-// ── Calcular estadísticas desde filas de Sheets ─────────────
-function _calcStats(sales) {
-  // Acumular en centavos para evitar error de punto flotante al sumar muchas ventas
-  let revCents = 0, cogsCents = 0, units = 0;
-  const byProd = {};
-  for (const s of sales) {
-    revCents  += Math.round((s.total      || 0) * 100);
-    cogsCents += Math.round((s.total_cogs || 0) * 100);
-    for (const item of s.items) {
-      units += item.units || 0;
-      const key = (item.product_name || '—').toLowerCase().trim();
-      if (!byProd[key]) byProd[key] = { name: item.product_name || '—', revC: 0, cogsC: 0, units: 0 };
-      byProd[key].revC  += Math.round((item.lineTotal  || 0) * 100);
-      byProd[key].cogsC += Math.round((item.item_cogs  || 0) * 100);
-      byProd[key].units += item.units || 0;
-    }
+// ═══════════════════════════════════════════════════════
+//  ESTADÍSTICAS (§9)
+// ═══════════════════════════════════════════════════════
+function preajusteRango(gran) {
+  const hoy = new Date();
+  let desde, hasta;
+  if (gran === 'dia') { desde = hasta = hoy; }
+  else if (gran === 'semana') { desde = startOfWeek(hoy); hasta = new Date(desde); hasta.setDate(hasta.getDate()+6); }
+  else { desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1); hasta = new Date(hoy.getFullYear(), hoy.getMonth()+1, 0); }
+  $('statDesde').value = fechaLocalISO(desde);
+  $('statHasta').value = fechaLocalISO(hasta);
+}
+async function aplicarStats() {
+  const desde = $('statDesde').value, hasta = $('statHasta').value;
+  if (!desde || !hasta) { preajusteRango(statGran); return aplicarStats(); }
+  setStatus('loading','Calculando…');
+  let ventas;
+  try { ventas = await Sheets.loadVentasRango(desde, hasta); setStatus('ok','Base de datos'); }
+  catch (e) { setStatus('error','Error'); toast(e.message,'error'); return; }
+
+  const stats = Store.calcStats(ventas);
+  $('stRevenue').textContent = fmt(stats.revenue);
+  $('stCount').textContent   = `${stats.salesCount} ventas`;
+  $('stCogs').textContent    = fmt(stats.cogs);
+  $('stProfit').textContent  = fmt(stats.profit);
+  $('stMargin').textContent  = `Margen: ${stats.margin.toFixed(1)}%`;
+  $('stUnits').textContent   = stats.units;
+
+  // Desglose efectivo / QR (cuenta el mixto por su parte real)
+  let efectivo=0, efN=0, qr=0, qrN=0;
+  for (const v of ventas) {
+    const d = desglosePago(v);
+    if (d.efectivo > 0) { efectivo += d.efectivo; efN++; }
+    if (d.qr > 0)       { qr       += d.qr;       qrN++; }
   }
-  // Convertir de centavos y aplicar Banker's Round solo al mostrar
-  const revenue = bankersRound(revCents  / 100);
-  const cogs    = bankersRound(cogsCents / 100);
-  const profit  = bankersRound((revCents - cogsCents) / 100);
-  const margin  = revenue > 0 ? (profit / revenue) * 100 : 0;
-  const top = Object.values(byProd).map(p => {
-    const rev    = bankersRound(p.revC  / 100);
-    const pc     = bankersRound(p.cogsC / 100);
-    const profit = bankersRound((p.revC - p.cogsC) / 100);
-    return { name: p.name, revenue: rev, cogs: pc, units: p.units, profit,
-             margin: rev > 0 ? (profit / rev) * 100 : 0 };
-  }).sort((a, b) => b.profit - a.profit);
-  return { revenue, cogs, profit, margin, salesCount: sales.length, units, top };
-}
+  $('stEfectivo').textContent  = fmt(efectivo);
+  $('stEfectivoN').textContent = `${efN} op.`;
+  $('stQr').textContent        = fmt(qr);
+  $('stQrN').textContent       = `${qrN} op.`;
 
-function toggleRepLotes(header) {
-  const panel = document.getElementById('repLotesPanel');
-  const arrow = document.getElementById('repLotesArrow');
-  const open  = panel.style.display === 'none';
-  panel.style.display = open ? 'block' : 'none';
-  arrow.textContent   = open ? '▼ ocultar' : '▶ mostrar';
-  header.classList.toggle('open', open);
-}
-
-async function printReport() {
-  const desde = document.getElementById('repDesde').value;
-  const hasta = document.getElementById('repHasta').value;
-  if (!desde || !hasta) { toast('Selecciona el período primero', 'warn'); return; }
-
-  toast('Cargando datos desde la base de datos…', 'success');
-  let sales;
-  try {
-    sales = await _loadVentasRango(desde, hasta);
-  } catch (e) {
-    toast('Error al leer ventas de la base de datos', 'error'); return;
+  // Agrupar por período (incluye desglose efectivo/QR por bucket)
+  const buckets = {};
+  for (const v of ventas) {
+    const k = bucketKey(v.fecha, statGran);
+    if (!buckets[k]) buckets[k] = { ventas:0, units:0, revenue:0, cogs:0, efectivo:0, qr:0 };
+    buckets[k].ventas++;
+    buckets[k].revenue += v.total; buckets[k].cogs += v.cogs;
+    buckets[k].units += (v.items||[]).reduce((s,it)=>s+(it.units||0),0);
+    const d = desglosePago(v);
+    buckets[k].efectivo += d.efectivo; buckets[k].qr += d.qr;
   }
-  const stats    = _calcStats(sales);
-  const lotRows_raw = await Sheets.readSheet('Lotes').catch(() => []);
-  const invRows_raw = await Sheets.readSheet('Inventario').catch(() => []);
+  const rows = Object.keys(buckets).sort().map(k => {
+    const b = buckets[k];
+    return `<tr><td class="mono">${k}</td><td>${b.ventas}</td><td>${b.units}</td>
+      <td>${fmtN(b.revenue)}</td><td>${fmtN(b.cogs)}</td><td>${fmtN(b.revenue-b.cogs)}</td>
+      <td class="m-g">${fmtN(b.efectivo)}</td><td style="color:var(--blue)">${fmtN(b.qr)}</td></tr>`;
+  }).join('');
+  $('stPeriodBody').innerHTML = rows || `<tr><td colspan="8" class="empty-cell">Sin datos en el rango</td></tr>`;
 
-  // Lotes activos desde Sheets: ID|Nombre|Fecha|Costo|Qty ini|Qty rest|Notas
-  const allLots = lotRows_raw.slice(1).filter(r => r[1] && parseFloat(r[5]) > 0).map(r => ({
-    name:          r[1], date: r[2],
-    cost:          parseFloat(r[3]) || 0,
-    qty_initial:   parseFloat(r[4]) || 0,
-    qty_remaining: parseFloat(r[5]) || 0
+  // Top productos
+  $('stTopBody').innerHTML = stats.top.slice(0,30).map(p => {
+    const mc = p.margin>=30?'g':p.margin>=15?'a':'r';
+    return `<tr><td>${p.nombre}</td><td>${p.tamaño||'—'}</td><td>${p.sabor||'—'}</td>
+      <td>${p.units}</td><td>${fmtN(p.revenue)}</td><td>${fmtN(p.profit)}</td>
+      <td class="m-${mc}">${p.margin.toFixed(0)}%</td></tr>`;
+  }).join('') || `<tr><td colspan="7" class="empty-cell">Sin datos</td></tr>`;
+}
+function initStats() {
+  document.querySelectorAll('#statGran .seg-btn').forEach(b => b.addEventListener('click', () => {
+    statGran = b.dataset.g;
+    document.querySelectorAll('#statGran .seg-btn').forEach(x=>x.classList.toggle('active', x===b));
+    preajusteRango(statGran);
+    aplicarStats();
   }));
-  const invTotal = allLots.reduce((s, l) => s + l.qty_remaining * l.cost, 0);
-
-  let effTotal = 0, effCount = 0, qrTotal = 0, qrCount = 0;
-  for (const s of sales) {
-    if (s.payment === 'efectivo') { effTotal += s.total; effCount++; }
-    else                          { qrTotal  += s.total; qrCount++;  }
-  }
-
-  const user = getUser();
-  const now  = new Date();
-  const fD   = d => d ? new Date(d).toLocaleDateString('es-BO') : '—';
-  const fN   = n => 'Bs ' + Number(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const fP   = n => Number(n).toFixed(1) + '%';
-  const mCol = m => m >= 30 ? '#1a6e30' : m >= 15 ? '#7a4e00' : '#b52a2a';
-
-  const desde_lbl = fD(desde + 'T12:00:00');
-  const hasta_lbl = fD(hasta + 'T12:00:00');
-
-  const topRows = stats.top.map((p, i) => `
-    <tr>
-      <td style="text-align:center;font-weight:700;color:#888">${i + 1}</td>
-      <td><strong>${p.name}</strong></td>
-      <td class="num">${p.units}</td>
-      <td class="num">${fN(p.revenue)}</td>
-      <td class="num" style="color:#7a4e00">${fN(p.cogs)}</td>
-      <td class="num" style="color:${p.profit >= 0 ? '#1a6e30' : '#b52a2a'};font-weight:700">${fN(p.profit)}</td>
-      <td class="num" style="color:${mCol(p.margin)};font-weight:700">${fP(p.margin)}</td>
-    </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;color:#999;padding:12px">Sin ventas en el período</td></tr>';
-
-  const lotRows = allLots.map(l => `<tr>
-      <td>${l.name}</td>
-      <td>${fD(l.date)}</td>
-      <td class="num">Bs ${l.cost.toFixed(2)}</td>
-      <td class="num">${l.qty_remaining} / ${l.qty_initial}</td>
-      <td class="num" style="font-weight:700">${fN(l.qty_remaining * l.cost)}</td>
-    </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:#999;padding:12px">Sin lotes activos</td></tr>';
-
-  const html = `<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<title>Reporte Financiero ${desde_lbl} – ${hasta_lbl}</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, Helvetica, sans-serif; color: #1a1a1a; padding: 28px 36px; font-size: 10.5pt; line-height: 1.5; }
-  .rh { text-align: center; border-bottom: 3px solid #1a1a1a; padding-bottom: 14px; margin-bottom: 22px; }
-  .rh-name { font-size: 20pt; font-weight: 900; letter-spacing: 3px; text-transform: uppercase; }
-  .rh-sub  { font-size: 12pt; color: #444; margin-top: 2px; font-weight: 600; }
-  .rh-meta { font-size: 8.5pt; color: #666; margin-top: 8px; }
-  .rh-period { font-size: 10pt; font-weight: 700; color: #222; margin-top: 4px; }
-  .sec { margin-bottom: 22px; }
-  .sec-title { font-size: 9pt; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase;
-               color: #fff; background: #1a1a1a; padding: 5px 10px; margin-bottom: 12px; }
-  /* KPIs */
-  .kpi-row { display: flex; gap: 12px; }
-  .kpi { flex:1; border: 1px solid #ccc; border-radius: 5px; padding: 10px 14px; }
-  .kpi-l { font-size: 7.5pt; color: #777; text-transform: uppercase; letter-spacing: 0.5px; }
-  .kpi-v { font-size: 17pt; font-weight: 800; color: #1a1a1a; line-height: 1.2; }
-  .kpi-s { font-size: 8pt; color: #555; }
-  .kpi.profit .kpi-v { color: #1a6e30; }
-  .kpi.cogs   .kpi-v { color: #7a4e00; }
-  /* Resumen financiero */
-  .fin-box { border: 1px solid #bbb; padding: 12px 20px; background: #fafafa; max-width: 380px; margin-left: auto; }
-  .fin-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 10pt; }
-  .fin-row.sep { border-top: 1px solid #ccc; margin-top: 5px; padding-top: 6px; }
-  .fin-row.total { font-weight: 900; font-size: 12pt; border-top: 2px solid #1a1a1a; margin-top: 5px; padding-top: 8px; }
-  .fin-row .lbl { color: #444; }
-  .fin-row .val { font-family: monospace; font-weight: 700; }
-  /* Pago */
-  .pay-row { display: flex; gap: 16px; }
-  .pay-box { flex:1; border: 1px solid #ccc; border-radius: 5px; padding: 10px 14px; }
-  .pay-m { font-weight: 800; font-size: 11pt; }
-  .pay-t { font-size: 15pt; font-weight: 800; color: #1a1a1a; }
-  .pay-c { font-size: 8pt; color: #777; }
-  /* Tablas */
-  table { width: 100%; border-collapse: collapse; font-size: 9pt; }
-  thead th { background: #333; color: #fff; padding: 6px 9px; text-align: left; font-weight: 700; font-size: 8.5pt; }
-  td { padding: 5px 9px; border-bottom: 1px solid #eee; vertical-align: middle; }
-  tr:nth-child(even) td { background: #f8f8f8; }
-  .num { text-align: right; font-family: monospace; }
-  .rank { text-align: center; }
-  /* Totales tabla */
-  .tbl-total { text-align: right; font-weight: 800; margin-top: 6px; font-size: 9.5pt; padding: 6px 9px;
-               background: #f0f0f0; border: 1px solid #ccc; }
-  /* Footer */
-  .footer { margin-top: 36px; border-top: 2px solid #1a1a1a; padding-top: 20px; }
-  .sign-row { display: flex; gap: 40px; }
-  .sign-box { flex:1; text-align: center; }
-  .sign-line { border-top: 1px solid #555; padding-top: 5px; }
-  .sign-lbl { font-size: 8pt; color: #555; }
-  .notice { font-size: 7.5pt; color: #888; text-align: center; margin-top: 16px; }
-  .badge-ok  { color: #1a6e30; font-weight: 700; }
-  .badge-low { color: #7a4e00; font-weight: 700; }
-  .badge-out { color: #b52a2a; font-weight: 700; }
-  @media print {
-    body { padding: 14px 20px; }
-    .no-print { display: none !important; }
-    @page { margin: 1.5cm; size: A4; }
-  }
-</style>
-</head>
-<body>
-
-<!-- ENCABEZADO -->
-<div class="rh">
-  <div class="rh-name">Licorería &amp; Bebidas</div>
-  <div class="rh-sub">Reporte Financiero</div>
-  <div class="rh-period">Período: ${desde_lbl} &nbsp;al&nbsp; ${hasta_lbl}</div>
-  <div class="rh-meta">
-    Generado el ${now.toLocaleDateString('es-BO')} a las ${now.toLocaleTimeString('es-BO', {hour:'2-digit',minute:'2-digit'})}
-    &nbsp;·&nbsp; Usuario: ${user.email}
-  </div>
-</div>
-
-<!-- KPIs PRINCIPALES -->
-<div class="sec">
-  <div class="sec-title">Resumen Ejecutivo</div>
-  <div class="kpi-row">
-    <div class="kpi">
-      <div class="kpi-l">Ingresos totales</div>
-      <div class="kpi-v">${fN(stats.revenue)}</div>
-      <div class="kpi-s">${stats.salesCount} venta${stats.salesCount !== 1 ? 's' : ''} · ${stats.units} unidades</div>
-    </div>
-    <div class="kpi cogs">
-      <div class="kpi-l">COGS (Costo de mercancías)</div>
-      <div class="kpi-v">${fN(stats.cogs)}</div>
-      <div class="kpi-s">Método FIFO</div>
-    </div>
-    <div class="kpi profit">
-      <div class="kpi-l">Ganancia bruta</div>
-      <div class="kpi-v" style="color:${stats.profit >= 0 ? '#1a6e30' : '#b52a2a'}">${fN(stats.profit)}</div>
-      <div class="kpi-s">Margen: <strong>${fP(stats.margin)}</strong></div>
-    </div>
-  </div>
-
-  <div class="fin-box" style="margin-top:14px">
-    <div class="fin-row"><span class="lbl">Ingresos</span><span class="val">${fN(stats.revenue)}</span></div>
-    <div class="fin-row"><span class="lbl">(-) COGS</span><span class="val" style="color:#7a4e00">(${fN(stats.cogs)})</span></div>
-    <div class="fin-row total"><span class="lbl">Ganancia bruta</span><span class="val" style="color:${stats.profit >= 0 ? '#1a6e30' : '#b52a2a'}">${fN(stats.profit)}</span></div>
-    <div class="fin-row sep"><span class="lbl">Margen bruto</span><span class="val">${fP(stats.margin)}</span></div>
-    <div class="fin-row"><span class="lbl">Nº de ventas</span><span class="val">${stats.salesCount}</span></div>
-    <div class="fin-row"><span class="lbl">Unidades vendidas</span><span class="val">${stats.units}</span></div>
-  </div>
-</div>
-
-<!-- DESGLOSE POR MÉTODO DE PAGO -->
-<div class="sec">
-  <div class="sec-title">Desglose por Método de Pago</div>
-  <div class="pay-row">
-    <div class="pay-box">
-      <div class="pay-m">💵 Efectivo</div>
-      <div class="pay-t">${fN(effTotal)}</div>
-      <div class="pay-c">${effCount} operación${effCount !== 1 ? 'es' : ''}</div>
-    </div>
-    <div class="pay-box">
-      <div class="pay-m">📱 QR / Transferencia</div>
-      <div class="pay-t">${fN(qrTotal)}</div>
-      <div class="pay-c">${qrCount} operación${qrCount !== 1 ? 'es' : ''}</div>
-    </div>
-    <div class="pay-box" style="background:#f5f5f5;border-color:#aaa">
-      <div class="pay-m">Total recaudado</div>
-      <div class="pay-t" style="color:#1a1a1a">${fN(effTotal + qrTotal)}</div>
-      <div class="pay-c">${stats.salesCount} transacciones</div>
-    </div>
-  </div>
-</div>
-
-<!-- TOP PRODUCTOS -->
-<div class="sec">
-  <div class="sec-title">Análisis por Producto (ordenado por ganancia)</div>
-  <table>
-    <thead>
-      <tr>
-        <th class="rank">#</th>
-        <th>Producto</th>
-        <th class="num">Unidades</th>
-        <th class="num">Ingresos</th>
-        <th class="num">COGS</th>
-        <th class="num">Ganancia</th>
-        <th class="num">Margen</th>
-      </tr>
-    </thead>
-    <tbody>${topRows}</tbody>
-  </table>
-  ${stats.top.length ? `<div class="tbl-total">TOTAL &nbsp; Ingresos: ${fN(stats.revenue)} &nbsp;·&nbsp; Ganancia: ${fN(stats.profit)} &nbsp;·&nbsp; Margen: ${fP(stats.margin)}</div>` : ''}
-</div>
-
-<!-- INVENTARIO / LOTES -->
-<div class="sec">
-  <div class="sec-title">Inventario Activo — Lotes FIFO</div>
-  <table>
-    <thead>
-      <tr>
-        <th>Producto</th>
-        <th>Fecha entrada</th>
-        <th class="num">Costo / u</th>
-        <th class="num">Qty rest. / inicial</th>
-        <th class="num">Valor inventario</th>
-      </tr>
-    </thead>
-    <tbody>${lotRows}</tbody>
-  </table>
-  <div class="tbl-total">VALOR TOTAL INVENTARIO: ${fN(invTotal)}</div>
-</div>
-
-<!-- FIRMA -->
-<div class="footer">
-  <div class="sign-row">
-    <div class="sign-box">
-      <div style="height:40px"></div>
-      <div class="sign-line">Elaborado por: ${user.name || user.email}</div>
-      <div class="sign-lbl">Firma / Sello</div>
-    </div>
-    <div class="sign-box">
-      <div style="height:40px"></div>
-      <div class="sign-line">Revisado por: ______________________</div>
-      <div class="sign-lbl">Cargo / Firma</div>
-    </div>
-    <div class="sign-box">
-      <div style="height:40px"></div>
-      <div class="sign-line">Fecha: ${now.toLocaleDateString('es-BO')}</div>
-      <div class="sign-lbl">Lugar: ______________________</div>
-    </div>
-  </div>
-  <div class="notice">Reporte generado automáticamente por POS Licorería v2 · ${now.toISOString()}</div>
-</div>
-
-<div class="no-print" style="text-align:center;margin:24px 0">
-  <button onclick="window.print()" style="padding:10px 28px;font-size:12pt;background:#1a1a1a;color:#fff;border:none;border-radius:6px;cursor:pointer">
-    Imprimir / Guardar PDF
-  </button>
-  <button onclick="window.close()" style="padding:10px 20px;font-size:12pt;background:#eee;color:#333;border:1px solid #ccc;border-radius:6px;cursor:pointer;margin-left:12px">
-    Cerrar
-  </button>
-</div>
-
-</body>
-</html>`;
-
-  const blob = new Blob([html], { type: 'text/html' });
-  const url  = URL.createObjectURL(blob);
-  const w    = window.open(url, '_blank', 'width=900,height=700,scrollbars=yes');
-  if (!w) { toast('El navegador bloqueó la ventana emergente. Permite ventanas emergentes.', 'warn'); }
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
-}
-
-async function renderReports() {
-  const desde = document.getElementById('repDesde').value;
-  const hasta = document.getElementById('repHasta').value;
-  if (!desde || !hasta) return;
-
-  document.getElementById('repRevenue').textContent = '…';
-  document.getElementById('repCogs').textContent    = '…';
-  document.getElementById('repProfit').textContent  = '…';
-  document.getElementById('repMargin').textContent  = '';
-  document.getElementById('repCount').textContent   = '';
-
-  let sales;
-  try {
-    sales = await _loadVentasRango(desde, hasta);
-  } catch (e) {
-    toast('Error al leer ventas de la base de datos', 'error');
-    return;
-  }
-  const stats = _calcStats(sales);
-
-  document.getElementById('repRevenue').textContent = fmt(stats.revenue);
-  document.getElementById('repCogs').textContent    = fmt(stats.cogs);
-  document.getElementById('repProfit').textContent  = fmt(stats.profit);
-  document.getElementById('repProfit').style.color  = stats.profit >= 0 ? 'var(--green)' : 'var(--red)';
-  document.getElementById('repMargin').textContent  = `Margen bruto: ${stats.margin.toFixed(1)}%`;
-  document.getElementById('repCount').textContent   = `${stats.salesCount} ventas`;
-
-  const tbody = document.getElementById('repBody');
-  tbody.innerHTML = !stats.top.length
-    ? `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">Sin datos en este período</td></tr>`
-    : stats.top.map(p => {
-        const mc = p.margin >= 30 ? 'var(--green)' : p.margin >= 15 ? 'var(--amber)' : 'var(--red)';
-        return `<tr>
-          <td><strong>${p.name}</strong></td>
-          <td style="font-family:var(--mono)">${p.units}</td>
-          <td style="font-family:var(--mono);color:var(--amber)">${fmt(p.revenue)}</td>
-          <td style="font-family:var(--mono);font-weight:700;color:${p.profit>=0?'var(--green)':'var(--red)'}">${fmt(p.profit)}</td>
-          <td><span style="font:700 .82rem var(--mono);color:${mc}">${p.margin.toFixed(1)}%</span></td>
-        </tr>`;
-      }).join('');
-
-  // Lotes activos desde Sheets
-  const lotsBody = document.getElementById('repLotsBody');
-  try {
-    const lotRows_raw = await Sheets.readSheet('Lotes');
-    const allLots = lotRows_raw.slice(1)
-      .filter(r => r[1] && parseFloat(r[5]) > 0)
-      .map(r => ({
-        name:          String(r[1]),
-        date:          r[2] || '',
-        cost:          parseFloat(r[3]) || 0,
-        qty_initial:   parseFloat(r[4]) || 0,
-        qty_remaining: parseFloat(r[5]) || 0
-      }))
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    lotsBody.innerHTML = !allLots.length
-      ? `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">Sin lotes activos</td></tr>`
-      : allLots.map(l => `<tr>
-          <td><strong>${l.name}</strong></td>
-          <td style="color:var(--text2)">${l.date ? new Date(l.date).toLocaleDateString('es-BO') : '—'}</td>
-          <td style="font-family:var(--mono);color:var(--amber)">Bs ${l.cost.toFixed(2)}</td>
-          <td style="font-family:var(--mono)">${l.qty_remaining} <span style="color:var(--text3);font-size:.75rem">/ ${l.qty_initial}</span></td>
-          <td style="font-family:var(--mono)">${fmt(l.qty_remaining * l.cost)}</td>
-        </tr>`).join('');
-  } catch (_) {
-    lotsBody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">No se pudieron cargar los lotes</td></tr>`;
-  }
-}
-
-// ── Usuario activo ────────────────────────────────────
-function getUser() {
-  return {
-    email: localStorage.getItem('pos_user_email') || 'MIUSHA',
-    name:  localStorage.getItem('pos_user_name')  || 'MIUSHA'
-  };
+  $('btnStatFilter').addEventListener('click', aplicarStats);
+  $('btnStatPrint').addEventListener('click', () => window.print());
+  preajusteRango('dia');
 }
 
 // ═══════════════════════════════════════════════════════
-//  AUTH — Login usuario / contraseña
+//  LOGIN (§8-bis)
 // ═══════════════════════════════════════════════════════
-const LOGIN_USER = 'MIUSHA';
-const LOGIN_PASS = 'NeOs1552';
-
-function showUserChip(name) {
-  const chip   = document.getElementById('userChip');
-  const avatar = document.getElementById('userAvatar');
-  const label  = document.getElementById('userName');
-  if (!chip) return;
-  avatar.textContent = name[0].toUpperCase();
-  label.textContent  = name;
-  chip.style.display = 'flex';
+function showUserChip() {
+  const nombre = localStorage.getItem('pos_nombre') || '';
+  const rol = localStorage.getItem('pos_rol') || '';
+  $('userChip').style.display = 'flex';
+  $('userName').textContent = nombre;
+  $('userRole').textContent = rol;
 }
-
-function logout() {
-  if (!confirm('¿Cerrar sesión?')) return;
-  localStorage.removeItem('pos_user_email');
-  localStorage.removeItem('pos_user_name');
+async function logout() {
+  const nombre = localStorage.getItem('pos_nombre') || '';
+  if (!await confirmar({ titulo:'Cerrar sesión', mensaje:`¿Cerrar la sesión de ${nombre || 'este usuario'}?`, ok:'Cerrar sesión', peligro:true })) return;
+  ['pos_user','pos_rol','pos_nombre'].forEach(k=>localStorage.removeItem(k));
   location.reload();
 }
-
 function setupLoginScreen() {
-  document.getElementById('loginScreen').style.display = 'flex';
-  const userInput = document.getElementById('loginUser');
-  const passInput = document.getElementById('loginPass');
-  const errEl     = document.getElementById('loginError');
-  const btnLogin  = document.getElementById('btnLogin');
-
+  $('loginScreen').style.display = 'flex';
+  const u = $('loginUser'), p = $('loginPass'), err = $('loginError');
   function doLogin() {
-    const u = userInput.value.trim();
-    const p = passInput.value;
-    if (u === LOGIN_USER && p === LOGIN_PASS) {
-      localStorage.setItem('pos_user_email', LOGIN_USER);
-      localStorage.setItem('pos_user_name',  LOGIN_USER);
+    const cuentas = (typeof CUENTAS !== 'undefined') ? CUENTAS : [];
+    const c = cuentas.find(x => x.user === u.value.trim() && x.pass === p.value);
+    if (c) {
+      localStorage.setItem('pos_user', c.user);
+      localStorage.setItem('pos_rol', c.rol);
+      localStorage.setItem('pos_nombre', c.nombre);
       location.reload();
     } else {
-      errEl.textContent = 'Usuario o contraseña incorrectos.';
-      passInput.value   = '';
-      passInput.focus();
+      err.textContent = 'Usuario o contraseña incorrectos.';
+      p.value=''; p.focus();
     }
   }
-
-  btnLogin.addEventListener('click', doLogin);
-  passInput.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
-  userInput.addEventListener('keydown', e => { if (e.key === 'Enter') passInput.focus(); });
+  $('btnLogin').addEventListener('click', doLogin);
+  p.addEventListener('keydown', e => { if (e.key==='Enter') doLogin(); });
+  u.addEventListener('keydown', e => { if (e.key==='Enter') p.focus(); });
 }
 
 // ═══════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════
 async function init() {
-  const savedEmail = localStorage.getItem('pos_user_email');
-  const savedName  = localStorage.getItem('pos_user_name');
-  
-  if (!savedEmail) {
-    setupLoginScreen();
-    return;
-  }
+  if (!localStorage.getItem('pos_user')) { setupLoginScreen(); return; }
 
-  // Sesión activa — arrancar directamente
-  showUserChip(savedName || savedEmail);
-  document.getElementById('btnLogout').addEventListener('click', logout);
-
-  await DB.open();
+  showUserChip();
+  $('btnLogout').addEventListener('click', logout);
   initNav();
-  const savedTab = sessionStorage.getItem('pos_tab');
-  if (savedTab) {
-    sessionStorage.removeItem('pos_tab');
-    document.querySelector(`.nav-btn[data-view="${savedTab}"]`)?.click();
-  }
+  aplicarPermisos();
 
-  // Ticket pendiente tras reload de venta
-  const pendingTicket = sessionStorage.getItem('pos_pending_ticket');
-  if (pendingTicket) {
-    sessionStorage.removeItem('pos_pending_ticket');
-    try {
-      const sale = JSON.parse(pendingTicket);
-      document.getElementById('btnLastTicket').style.display = 'inline-flex';
-      setTimeout(() => showTicket(sale), 300);
-    } catch (_) {}
-  }
+  // Modales: cerrar con [data-close] y overlay. Al cerrar el escáner, apagar la cámara.
+  document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => {
+    closeModal(b.dataset.close);
+    if (b.dataset.close === 'modalScanner') closeScanner();
+  }));
+  document.querySelectorAll('.modal-overlay').forEach(o => o.addEventListener('click', e => {
+    if (e.target!==o) return;
+    if (o.id === 'modalConfirm') { _confCerrar(false); return; }  // cerrar = cancelar, resuelve la Promise
+    o.classList.remove('open');
+    if (o.id === 'modalScanner') closeScanner();
+  }));
 
-  initScan();
-  initPayment();
-  initCartDeleteHold();
-  renderCart();
-  tickClock();
-  setInterval(tickClock, 1000); // Actualizar reloj cada segundo
+  // Modal de confirmación reutilizable
+  $('confSi').addEventListener('click', () => _confCerrar(true));
+  $('confNo').addEventListener('click', () => _confCerrar(false));
+
+  // Escape cierra el modal abierto (Confirmar = cancelar; escáner apaga cámara)
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    const abiertos = document.querySelectorAll('.modal-overlay.open');
+    if (!abiertos.length) return;
+    const o = abiertos[abiertos.length - 1];
+    if (o.id === 'modalConfirm') { _confCerrar(false); return; }
+    o.classList.remove('open');
+    if (o.id === 'modalScanner') closeScanner();
+  });
+
+  initScan(); initPayment(); initStats();
+  $('btnAddVariante').addEventListener('click', confirmVariante);
+  $('btnDiscOk').addEventListener('click', aplicarDiscount);
+  $('btnDiscReset').addEventListener('click', quitarDiscount);
+  $('discInput').addEventListener('input', _discUpdateMargen);
+  $('discInput').addEventListener('keydown', e => { if (e.key==='Enter') aplicarDiscount(); });
+  $('btnNuevoProd').addEventListener('click', openNewProduct);
+  $('btnSaveProd').addEventListener('click', saveProduct);
+  $('btnDeleteProd').addEventListener('click', async () => {
+    const id = $('fpId').value; if (!id) return;
+    await deleteProduct(id);                 // confirma internamente
+    if (!Store.getProducto(id)) closeModal('modalProducto');  // se borró → cerrar
+  });
+  $('btnAddVar').addEventListener('click', () => addVarRow());
+  $('btnNuevaCat').addEventListener('click', openNewCategoria);
+  $('btnSaveCat').addEventListener('click', saveCategoria);
+  $('btnEntradaStock').addEventListener('click', openStockAdj);
+  $('btnLotesEntrada').addEventListener('click', () => { closeModal('modalLotes'); openStockAdj(); });
+  $('btnSaveEditLote').addEventListener('click', guardarEditLote);
+  $('btnCalcUnit').addEventListener('click', recalcCostoUnit);
+  $('btnSaveAdj').addEventListener('click', saveStockAdj);
+  $('btnRefreshInv').addEventListener('click', () => recargar(true));
+  $('btnPrintTicket').addEventListener('click', () => window.print());
+  $('prodSearch').addEventListener('input', e => renderProducts(e.target.value));
+  $('invSearch').addEventListener('input', e => renderInventory(e.target.value));
 
   // Ventas: fecha hoy
-  const fv = document.getElementById('ventasFecha');
-  fv.value = new Date().toISOString().split('T')[0];
-  fv.addEventListener('change', e => renderSales(e.target.value));
-
-  // Borrar venta — listener único en salesBody (nunca se acumula)
-  document.getElementById('salesBody').addEventListener('click', async e => {
-    const btn = e.target.closest('.btn-del-venta');
-    if (!btn) return;
-    const r = _salesCache[btn.dataset.sidx];
-    if (!r) return;
-    const id    = r[0];
-    const hora  = r[2] || '—';
-    const total = r[3] || '0';
-    if (!id) { toast('Sin ID — no se puede eliminar', 'error'); return; }
-    if (!confirm(`¿Eliminar la venta ${id}?\nHora: ${hora}  ·  Total: Bs ${total}\n\nEsta acción no se puede deshacer.`)) return;
-    showOverlay('Eliminando venta…');
-    try {
-      await Sheets.deleteVenta(id);
-      hideOverlay();
-      toast('🗑 Venta eliminada', 'success');
-      renderSales(fv.value);
-    } catch (err) {
-      hideOverlay();
-      toast(`Error al eliminar: ${err.message}`, 'error');
-    }
+  $('ventasFecha').value = fechaLocalISO();
+  $('ventasFecha').addEventListener('change', e => renderSales(e.target.value));
+  $('salesBody').addEventListener('click', async e => {
+    const btn = e.target.closest('.btn-del-venta'); if (!btn) return;
+    const v = _salesCache[btn.dataset.i]; if (!v?.id) return;
+    if (!await confirmar({ titulo:'Eliminar venta', mensaje:`Venta ${v.id} · Total ${fmt(v.total)}.\nNo se puede deshacer.`, ok:'Eliminar', peligro:true })) return;
+    showOverlay('Eliminando…');
+    await Sheets.deleteVenta(v.id).catch(()=>{});
+    hideOverlay(); toast('🗑 Venta eliminada','success');
+    renderSales($('ventasFecha').value);
   });
 
-  // Reportes: mes actual
-  const hoy   = new Date();
-  const desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().split('T')[0];
-  document.getElementById('repDesde').value = desde;
-  document.getElementById('repHasta').value = hoy.toISOString().split('T')[0];
-  document.getElementById('btnRepFilter').addEventListener('click', renderReports);
-  document.getElementById('btnRepPrint').addEventListener('click', printReport);
+  // Banner de vencimientos
+  $('expiryBannerGo').addEventListener('click', () => { $('expiryBanner').style.display='none'; irAVista('inventario'); });
+  $('expiryBannerX').addEventListener('click', () => { $('expiryBanner').style.display='none'; });
+  // Panel "por vencer": colapsar/expandir
+  $('vencerHead').addEventListener('click', () => $('invVencerPanel').classList.toggle('collapsed'));
 
-  // Búsquedas
-  document.getElementById('prodSearch').addEventListener('input', e => renderProducts(e.target.value));
-  document.getElementById('invSearch').addEventListener('input', e => renderInventory(e.target.value));
+  renderCart(); tickClock(); setInterval(tickClock, 1000);
 
-  // Sort inventario
-  document.querySelectorAll('.th-sort').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.col;
-      if (invSort.col === col) invSort.dir *= -1; else { invSort.col = col; invSort.dir = 1; }
-      renderInventory(document.getElementById('invSearch').value);
-    });
-  });
+  // Carga inicial desde Sheets
+  await recargar(false);
+}
 
-  // Botones productos
-  document.getElementById('btnNuevo').addEventListener('click', openNewProduct);
-  document.getElementById('btnAddBc').addEventListener('click', () => addBcRow());
-  document.getElementById('btnSaveProd').addEventListener('click', saveProduct);
-  document.getElementById('btnCancelProd').addEventListener('click', () => closeModal('modalProducto'));
-  document.getElementById('modalProdX').addEventListener('click', () => closeModal('modalProducto'));
-
-  // Botones stock
-  document.getElementById('btnEntradaStock').addEventListener('click', () => openStockAdj());
-  document.getElementById('btnRefreshInv').addEventListener('click', () => syncInventario());
-
-  // Listeners delegados para botones de inventario (evita problemas con nombres especiales)
-  document.getElementById('invBody').addEventListener('click', e => {
-    const btnStock = e.target.closest('.inv-btn-stock');
-    const btnEdit  = e.target.closest('.inv-btn-edit');
-    if (btnStock) openStockAdjByName(btnStock.dataset.name);
-    if (btnEdit)  openEditProductByName(btnEdit.dataset.name);
-  });
-  document.getElementById('btnSaveAdj').addEventListener('click', saveStockAdj);
-  document.getElementById('btnCancelAdj').addEventListener('click', () => closeModal('modalStock'));
-  document.getElementById('modalStockX').addEventListener('click', () => closeModal('modalStock'));
-
-  // recalcCostoUnit es global — llamada desde oninput en el HTML
-
-  // Botón "Hoy" para fecha de compra
-  document.getElementById('btnFechaHoy').addEventListener('click', () => {
-    document.getElementById('adjFecha').value = new Date().toISOString().split('T')[0];
-    toast('Fecha de hoy establecida', 'success');
-  });
-
-  // Ticket
-  document.getElementById('btnLastTicket').addEventListener('click', async () => {
-    if (lastSaleId) showTicket(await DB.getSale(lastSaleId));
-  });
-  document.getElementById('modalTicketX').addEventListener('click', () => closeModal('modalTicket'));
-  document.getElementById('btnCloseTicket').addEventListener('click', () => closeModal('modalTicket'));
-  document.getElementById('btnPrintTicket').addEventListener('click', () => window.print());
-
-  // Pantalla completa
-  const btnFs          = document.getElementById('btnFullscreen');
-  const fsIconExpand   = document.getElementById('fsIconExpand');
-  const fsIconCompress = document.getElementById('fsIconCompress');
-  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
-                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const fsSupported = document.documentElement.requestFullscreen ||
-                      document.documentElement.webkitRequestFullscreen;
-
-  function updateFsIcon() {
-    const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
-    fsIconExpand.style.display   = isFs ? 'none' : '';
-    fsIconCompress.style.display = isFs ? ''     : 'none';
-    btnFs.classList.toggle('active', isFs);
-    btnFs.title = isFs ? 'Salir de pantalla completa' : 'Pantalla completa';
+async function recargar(notify) {
+  if (!Sheets.isConfigured()) {
+    setStatus('error','config.js sin configurar');
+    toast('Configura config.js (SHEETS_ID y API_KEY)','error');
+    return;
   }
-
-  if (isIOS) {
-    // iOS no permite fullscreen API — mostrar instrucciones para instalar como PWA
-    btnFs.addEventListener('click', () => {
-      const ya = window.navigator.standalone;
-      if (ya) {
-        toast('Ya estás en modo pantalla completa (PWA instalada)', 'success');
-      } else {
-        // Mostrar tip flotante con instrucciones
-        let tip = document.getElementById('_iosFsTip');
-        if (tip) { tip.remove(); return; }
-        tip = document.createElement('div');
-        tip.id = '_iosFsTip';
-        tip.style.cssText = `position:fixed;top:60px;left:12px;z-index:9999;
-          background:#1a2332;border:1px solid var(--border);border-radius:12px;
-          padding:14px 16px;max-width:280px;font-size:.82rem;line-height:1.55;
-          color:var(--text);box-shadow:0 8px 32px #000a`;
-        tip.innerHTML = `<b style="color:var(--cyan)">📱 Pantalla completa en iOS</b><br><br>
-          Safari no permite esta función directamente.<br><br>
-          Para abrir sin barras:<br>
-          <b>1.</b> Toca el botón <b>Compartir</b> (□↑) en Safari<br>
-          <b>2.</b> Selecciona <b>"Agregar a pantalla de inicio"</b><br>
-          <b>3.</b> Abre la app desde el ícono — sin barras 🎉<br><br>
-          <button onclick="document.getElementById('_iosFsTip').remove()"
-            style="width:100%;padding:8px;background:var(--cyan);color:#000;border:none;
-                   border-radius:8px;cursor:pointer;font-weight:700">Entendido</button>`;
-        document.body.appendChild(tip);
-        // Auto-cerrar al tocar fuera
-        setTimeout(() => {
-          document.addEventListener('pointerdown', function cl(e) {
-            if (!e.target.closest('#_iosFsTip') && !e.target.closest('#btnFullscreen')) {
-              tip?.remove(); document.removeEventListener('pointerdown', cl);
-            }
-          });
-        }, 100);
-      }
-    });
-    // Si ya está instalada como PWA, marcar el ícono como activo
-    if (window.navigator.standalone) {
-      fsIconExpand.style.display   = 'none';
-      fsIconCompress.style.display = '';
-      btnFs.classList.add('active');
-      btnFs.title = 'Modo pantalla completa activo (PWA)';
-    }
-  } else if (fsSupported) {
-    // Android / escritorio — API fullscreen estándar
-    btnFs.addEventListener('click', () => {
-      const el = document.documentElement;
-      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-        (el.requestFullscreen || el.webkitRequestFullscreen).call(el).catch(() => {
-          toast('El navegador no permite pantalla completa', 'warn');
-        });
-      } else {
-        (document.exitFullscreen || document.webkitExitFullscreen).call(document).catch(() => {});
-      }
-    });
-    document.addEventListener('fullscreenchange',       updateFsIcon);
-    document.addEventListener('webkitfullscreenchange', updateFsIcon);
-  } else {
-    // Navegador sin soporte alguno
-    btnFs.addEventListener('click', () => toast('Tu navegador no soporta pantalla completa', 'warn'));
+  setStatus('loading','Cargando…');
+  try {
+    await Sheets.loadAll(msg => setStatus('loading', msg));
+    setStatus('ok','Base de datos');
+    if (notify) toast('✓ Datos actualizados','success');
+    // Re-render de la vista activa
+    irAVista(vistaActual());
+    avisarVencimientos();   // banner si hay lotes por vencer
+  } catch (e) {
+    setStatus('error','Error');
+    toast('Error al cargar: ' + e.message, 'error');
   }
+}
 
-  // Scanner cámara
-  document.getElementById('btnCamera').addEventListener('click', openScanner);
-  document.getElementById('btnCancelScanner').addEventListener('click', closeScanner);
-  document.getElementById('modalScannerX').addEventListener('click', closeScanner);
-
-  // Discount modal
-  document.getElementById('modalDiscountX').addEventListener('click', () => closeModal('modalDiscount'));
-
-  // Editar venta
-  document.getElementById('modalEditVentaX').addEventListener('click', () => closeModal('modalEditVenta'));
-  document.getElementById('btnCancelEditVenta').addEventListener('click', () => closeModal('modalEditVenta'));
-
-  // Editar lote
-  document.getElementById('modalEditLoteX').addEventListener('click',    () => closeModal('modalEditLote'));
-  document.getElementById('btnCancelEditLote').addEventListener('click', () => closeModal('modalEditLote'));
-  document.getElementById('btnSaveEditLote').addEventListener('click',   saveEditLote);
-  document.getElementById('btnSaveEditVenta').addEventListener('click', saveEditVenta);
-  // Actualizar preview de ganancia al cambiar total o cogs
-  ['evTotal', 'evCogs'].forEach(id => {
-    document.getElementById(id).addEventListener('input', _evUpdatePreview);
-  });
-
-  // Escape cierra modales
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') ['modalProducto','modalStock','modalTicket','modalScanner','modalDiscount','modalEditVenta','modalEditLote'].forEach(closeModal);
-  });
-
-  // Ripple en botones
-  document.addEventListener('pointerdown', e => {
-    const btn = e.target.closest('.btn,.btn-primary,.btn-pay,.nav-btn');
-    if (!btn) return;
-    const r  = document.createElement('span'); r.className = 'ripple';
-    const rc = btn.getBoundingClientRect();
-    const sz = Math.max(rc.width, rc.height);
-    r.style.cssText = `width:${sz}px;height:${sz}px;left:${e.clientX-rc.left-sz/2}px;top:${e.clientY-rc.top-sz/2}px`;
-    btn.style.position = 'relative'; btn.style.overflow = 'hidden';
-    btn.appendChild(r); setTimeout(() => r.remove(), 600);
-  });
-
-  // Auto-cargar y sincronizar desde base de datos
-  // Siempre lee Catálogo (definiciones) + Inventario (stock) y los fusiona
-  let syncCount = 0;
-  async function syncFromSheets(silent = false) {
-    if (!Sheets.isConfigured()) {
-      setStatus('error', 'Base de datos no configurada');
-      const prods = await DB.getActiveProducts();
-      if (prods.length) { renderProducts(); renderInventory(); }
-      return;
-    }
-    if (!silent) setStatus('loading', 'Sincronizando…');
-    try {
-      // syncInventario llena _invCache Y loadFromSheets llena IndexedDB (para FIFO)
-      await Promise.all([
-        syncInventario(true),   // _invCache ← Sheets (productos, lotes, barcodes)
-        Sheets.loadFromSheets() // IndexedDB ← Sheets (necesario para FIFO al vender)
-      ]);
-      refreshCats();
-      setStatus('ok', 'Base de datos lista');
-      renderProducts();
-      updateExpiryBadge();
-    } catch (err) {
-      setStatus('error', 'Sin conexión');
-      const prods = await DB.getActiveProducts();
-      if (prods.length) renderProducts();
-      console.warn('[syncFromSheets] Error:', err.message);
-    }
-  }
-
-  // Carga inicial
-  setStatus('loading', 'Conectando…');
-  await syncFromSheets();
-  // Revisar vencimientos al cargar
-  setTimeout(() => { checkExpiryAlerts(); updateExpiryBadge(); }, 3000);
-
-  // Sin auto-sync automático — solo se sincroniza al guardar manualmente
+// Banner de aviso al cargar datos: cuántos lotes vencen/vencieron
+function avisarVencimientos() {
+  const banner = $('expiryBanner'); if (!banner) return;
+  const lista = lotesPorVencer();
+  if (!lista.length) { banner.style.display = 'none'; return; }
+  const vencidos = lista.filter(x => x.dias < 0).length;
+  const proximos = lista.length - vencidos;
+  let txt = '⚠ ';
+  if (vencidos) txt += `${vencidos} lote${vencidos>1?'s':''} VENCIDO${vencidos>1?'S':''}`;
+  if (vencidos && proximos) txt += ' y ';
+  if (proximos) txt += `${proximos} por vencer (≤${EXPIRY_WARN_DAYS} días)`;
+  $('expiryBannerText').textContent = txt;
+  banner.classList.toggle('grave', vencidos > 0);
+  banner.style.display = 'flex';
 }
 
 document.addEventListener('DOMContentLoaded', init);
